@@ -1,0 +1,49 @@
+# Copyright 2024 General Atomics
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+
+context:
+  version: ${{ env.get("PKG_VERSION") }}
+
+package:
+  name: fdp
+  version: ${{ version }}
+
+source:
+  path: ..
+
+build:
+  noarch: python
+  script:
+    - ${{ PYTHON }} -m pip install . --no-deps --no-build-isolation --ignore-installed -vv
+
+requirements:
+  host:
+    - python
+    - pip
+    - setuptools
+    - versioneer
+  run:
+    - python
+    - xrdcl-pelican
+    - pelicanplatform >=7.24.3,<8
+
+tests:
+  - script:
+      content:
+        - cd tests && ./testit --mock
+    files:
+      source:
+        - tests/
+
+about:
+  homepage: https://github.com/GA-FDP/fdp
+  license: Apache-2.0
+  license_file: LICENSE
+  summary: Fusion Data Platform CLI (Pelican/XRootD env, skills, LLM frontend)
+  repository: https://github.com/GA-FDP/fdp
+
+extra:
+  recipe-maintainers:
+    - sammuli
