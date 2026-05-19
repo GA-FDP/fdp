@@ -14,8 +14,33 @@
 
 """fdp - Fusion Data Platform CLI.
 
-Public surface filled in by subsequent tasks in this plan.
+Public surface:
+
+- ``Device``: tokamak data-platform config contributed via the
+  ``fdp.devices`` entry point.
+- ``list_devices()`` / ``get_device(name)`` / ``current_device()``:
+  introspection.
+- ``setup_environment(device=None, bearer_token=None)``: apply FDP env
+  vars to ``os.environ`` for the chosen device. (Added in Task 3.)
+- ``FdpFileSystem``: XRootD wrapper used by ``fdp ls``. (Added in Task 4.)
 """
 
+from .devices import (
+    Device,
+    list_devices,
+    get_device,
+    current_device,
+    resolve_default_device,
+)
 from . import _version
+
 __version__ = _version.get_versions()["version"]
+
+__all__ = [
+    "Device",
+    "list_devices",
+    "get_device",
+    "current_device",
+    "resolve_default_device",
+    "__version__",
+]
