@@ -20,10 +20,28 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from fdp.devices import Device, clear_device_cache
 from fdp.environment import (
     apply_environment,
     setup_environment,
     _generic_config,
+)
+
+
+def _fake_ep(name, value):
+    ep = mock.MagicMock()
+    ep.name = name
+    ep.load.return_value = value
+    return ep
+
+
+_D3D_TEST_DEVICE = Device(
+    name="d3d",
+    pelican_root="pelican://test/fdp-d3d",
+    origin_server="root://test:8443",
+    mds_default_tree_path="pelican://test/fdp-d3d/mds/~t",
+    ptdata_index_dir="pelican://test/fdp-d3d/idx",
+    description="test d3d (no fallback in fdp anymore)",
 )
 
 
@@ -52,8 +70,19 @@ class TestSetupEnvironment(unittest.TestCase):
                   "X509_CERT_FILE", "MDS_PATH", "PTDATA_LOC",
                   "PTDATA_LIBRARY", "PTDATA_PLUGIN_LIB"):
             self._saved[k] = os.environ.pop(k, None)
+        # Provide a fake 'd3d' contributor since fdp no longer ships a
+        # fallback. resolve_default_device() will pick it as the sole
+        # registered device.
+        clear_device_cache()
+        self._ep_patch = mock.patch(
+            "fdp.devices._entry_points",
+            return_value=[_fake_ep("d3d", _D3D_TEST_DEVICE)],
+        )
+        self._ep_patch.start()
 
     def tearDown(self):
+        self._ep_patch.stop()
+        clear_device_cache()
         for k, v in self._saved.items():
             if v is not None:
                 os.environ[k] = v
@@ -68,7 +97,6 @@ class TestSetupEnvironment(unittest.TestCase):
 
     def test_device_keys_applied(self):
         setup_environment(bearer_token="dummy")
-        # Fallback device (d3d) contributes default_tree_path
         self.assertIn("default_tree_path", os.environ)
         self.assertIn("fdp-d3d", os.environ["default_tree_path"])
 
@@ -95,6 +123,22 @@ class TestSetupEnvironment(unittest.TestCase):
     def test_device_by_name(self):
         setup_environment(device="d3d", bearer_token="dummy")
         self.assertIn("fdp-d3d", os.environ["default_tree_path"])
+
+    def test_no_devices_installed_raises(self):
+        # With no contributors, fdp can't pick a default.
+        self._ep_patch.stop()
+        clear_device_cache()
+        try:
+            with mock.patch("fdp.devices._entry_points", return_value=[]):
+                with self.assertRaises(ValueError):
+                    setup_environment(bearer_token="dummy")
+        finally:
+            # Re-start the patch so tearDown's stop() matches a start().
+            self._ep_patch = mock.patch(
+                "fdp.devices._entry_points",
+                return_value=[_fake_ep("d3d", _D3D_TEST_DEVICE)],
+            )
+            self._ep_patch.start()
 
 
 if __name__ == "__main__":

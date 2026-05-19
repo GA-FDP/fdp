@@ -26,8 +26,16 @@ from fdp.devices import (
     list_devices,
     resolve_default_device,
     clear_device_cache,
-    _FALLBACK_DEVICE,
 )
+
+
+def _d3d_device():
+    return Device(
+        name="d3d",
+        pelican_root="pelican://test/fdp-d3d",
+        origin_server="root://test:8443",
+        description="test d3d",
+    )
 
 
 def _fake_ep(name, value):
@@ -95,20 +103,13 @@ class TestDevice(_Base):
 
 
 class TestDiscovery(_Base):
-    def test_no_entry_points_yields_only_fallback(self):
+    def test_no_entry_points_yields_empty_dict(self):
         with mock.patch("fdp.devices._entry_points", return_value=[]):
             devices = discover_devices()
-        # The fallback is always present.
-        self.assertIn("d3d", devices)
-        self.assertIs(devices["d3d"], _FALLBACK_DEVICE)
+        self.assertEqual(devices, {})
 
-    def test_entry_point_contributor_takes_precedence_over_fallback(self):
-        contributor = Device(
-            name="d3d",
-            pelican_root="pelican://contrib/fdp-d3d",
-            origin_server="root://contrib:8443",
-            description="contributor-supplied D3D",
-        )
+    def test_entry_point_contributor_is_used(self):
+        contributor = _d3d_device()
         with mock.patch(
             "fdp.devices._entry_points",
             return_value=[_fake_ep("d3d", contributor)],
@@ -128,23 +129,37 @@ class TestDiscovery(_Base):
 
 
 class TestResolution(_Base):
-    def test_single_device_auto_selected(self):
+    def test_no_devices_raises(self):
         with mock.patch("fdp.devices._entry_points", return_value=[]):
+            with self.assertRaises(ValueError):
+                resolve_default_device()
+
+    def test_single_device_auto_selected(self):
+        d3d = _d3d_device()
+        with mock.patch("fdp.devices._entry_points",
+                        return_value=[_fake_ep("d3d", d3d)]):
             d = resolve_default_device()
-        self.assertEqual(d.name, "d3d")  # the fallback
+        self.assertIs(d, d3d)
 
     def test_explicit_pick(self):
-        d = resolve_default_device(explicit="d3d")
-        self.assertEqual(d.name, "d3d")
+        d3d = _d3d_device()
+        with mock.patch("fdp.devices._entry_points",
+                        return_value=[_fake_ep("d3d", d3d)]):
+            d = resolve_default_device(explicit="d3d")
+        self.assertIs(d, d3d)
 
     def test_env_var(self):
-        with mock.patch.dict(os.environ, {"FDP_DEFAULT_DEVICE": "d3d"}):
+        d3d = _d3d_device()
+        with mock.patch("fdp.devices._entry_points",
+                        return_value=[_fake_ep("d3d", d3d)]), \
+                mock.patch.dict(os.environ, {"FDP_DEFAULT_DEVICE": "d3d"}):
             d = resolve_default_device()
-        self.assertEqual(d.name, "d3d")
+        self.assertIs(d, d3d)
 
     def test_unknown_name_raises(self):
-        with self.assertRaises(ValueError):
-            resolve_default_device(explicit="nonexistent")
+        with mock.patch("fdp.devices._entry_points", return_value=[]):
+            with self.assertRaises(ValueError):
+                resolve_default_device(explicit="nonexistent")
 
     def test_multiple_no_pick_raises(self):
         # Two contributors; no env var, no flag, no config -> error.

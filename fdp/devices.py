@@ -16,11 +16,8 @@
 
 Devices are discovered via the `fdp.devices` Python entry-point group.
 Each contributor registers a `Device` instance under a short name.
-
-A built-in `_FALLBACK_DEVICE` (D3D's values) is included so `fdp` is
-usable end-to-end before `toksearch_d3d` is installed as a contributor.
-The fallback is removed once `toksearch_d3d` has switched over to
-contributing via entry points (see PR 4 of the migration plan).
+With no contributors installed, `discover_devices()` returns an empty
+dict; install a device package (e.g. `toksearch_d3d`) to get one.
 """
 
 import os
@@ -91,35 +88,6 @@ class Device:
 
 
 # ----------------------------------------------------------------------
-# Built-in fallback (back-compat anchor; removed once a contributor exists)
-# ----------------------------------------------------------------------
-
-_FALLBACK_DEVICE = Device(
-    name="d3d",
-    pelican_root="pelican://osg-htc.org:443/fdp-d3d",
-    origin_server="root://fdp-d3d-origin.nationalresearchplatform.org:8443",
-    ptdata_index_dir=(
-        "pelican://osg-htc.org:443/fdp-d3d/archives/index/json/"
-        "json_indexes_2026-01-13_12:22:11"
-    ),
-    mds_default_tree_path=";".join([
-        "pelican://osg-htc.org:443/fdp-d3d/archives/mdsplus/codes/~t/~j~i/~h~g/~f~e/~d~c",
-        "pelican://osg-htc.org:443/fdp-d3d/archives/mdsplus/usershots/~t",
-        "pelican://osg-htc.org:443/fdp-d3d/archives/mdsplus/models/~t",
-        "pelican://osg-htc.org:443/fdp-d3d/archives/mdsplus/shots/~t/~f~e/~d~c",
-    ]),
-    description="DIII-D fusion experiment (fallback; replaced by "
-                "toksearch_d3d's contributor when installed)",
-    default_llm_preset="amsc",
-    extra_env={
-        "D3DATA": "yes",
-        "SYS_D3_DELIM": ";",
-        "CAKE_DB_PATH": "pelican://osg-htc.org:443/fdp-d3d/metadata/iri_logs.db",
-    },
-)
-
-
-# ----------------------------------------------------------------------
 # Discovery
 # ----------------------------------------------------------------------
 
@@ -139,9 +107,8 @@ def clear_device_cache() -> None:
 def discover_devices() -> dict[str, Device]:
     """Return {name: Device} of every discovered device contributor.
 
-    Reads the `fdp.devices` entry-point group. The built-in
-    `_FALLBACK_DEVICE` ('d3d') is included if no contributor registers
-    that name. Contributor entries take precedence over the fallback.
+    Reads the `fdp.devices` entry-point group. Returns an empty dict if
+    no contributor is installed.
     """
     global _DEVICE_CACHE
     if _DEVICE_CACHE is not None:
@@ -154,9 +121,6 @@ def discover_devices() -> dict[str, Device]:
             continue
         if isinstance(value, Device):
             out[ep.name] = value
-    # Fall back to D3D if nobody contributed a 'd3d'
-    if "d3d" not in out:
-        out["d3d"] = _FALLBACK_DEVICE
     _DEVICE_CACHE = out
     return out
 
