@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-export PKG_VERSION=$(pixi run python print_version.py)
+export PKG_VERSION=$(pixi run python ../print_version.py)
 
 echo "Building version: ${PKG_VERSION}"
 
