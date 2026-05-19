@@ -49,4 +49,4 @@ jobs:
             --channel "$LABEL" \
             --api-key ${{ secrets.ANACONDA_API_TOKEN }} \
             --force \
-            ${HOME}/outdir/linux-64/*.conda
+            ${HOME}/outdir/*/*.conda
