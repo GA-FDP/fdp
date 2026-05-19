@@ -32,6 +32,7 @@ from .devices import (
     current_device,
     resolve_default_device,
 )
+from .environment import setup_environment, apply_environment
 from . import _version
 
 __version__ = _version.get_versions()["version"]
@@ -42,5 +43,7 @@ __all__ = [
     "get_device",
     "current_device",
     "resolve_default_device",
+    "setup_environment",
+    "apply_environment",
     "__version__",
 ]
