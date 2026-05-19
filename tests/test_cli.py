@@ -21,18 +21,53 @@ import io
 import os
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from unittest import mock
 
+from fdp.devices import Device, clear_device_cache
 
-def _run_cli(argv):
+
+_TEST_D3D = Device(
+    name="d3d",
+    pelican_root="pelican://test/fdp-d3d",
+    origin_server="root://test:8443",
+    mds_default_tree_path="pelican://test/fdp-d3d/mds/~t",
+    description="test d3d",
+)
+
+
+def _fake_ep(name, value):
+    ep = mock.MagicMock()
+    ep.name = name
+    ep.load.return_value = value
+    return ep
+
+
+def _patch_devices(stack, devices=((_TEST_D3D.name, _TEST_D3D),)):
+    """Context-manager hook used by the helpers below.
+
+    fdp no longer ships a fallback Device, so CLI tests that don't
+    otherwise care about device discovery still need at least one
+    contributor registered for resolve_default_device() to succeed.
+    """
+    clear_device_cache()
+    stack.callback(clear_device_cache)
+    stack.enter_context(mock.patch(
+        "fdp.devices._entry_points",
+        return_value=[_fake_ep(n, d) for n, d in devices],
+    ))
+
+
+def _run_cli(argv, devices=((_TEST_D3D.name, _TEST_D3D),)):
     """Invoke fdp.cli.main with mocks; return (stdout, exit_code)."""
     from fdp import cli
     buf = io.StringIO()
     exit_code = None
-    with mock.patch.object(sys, "argv", argv), \
-            mock.patch.object(cli, "setup_environment"), \
-            redirect_stdout(buf):
+    with ExitStack() as stack:
+        _patch_devices(stack, devices)
+        stack.enter_context(mock.patch.object(sys, "argv", argv))
+        stack.enter_context(mock.patch.object(cli, "setup_environment"))
+        stack.enter_context(redirect_stdout(buf))
         try:
             cli.main()
         except SystemExit as e:
@@ -53,12 +88,14 @@ class TestCliEnv(unittest.TestCase):
 class TestCliRun(unittest.TestCase):
     def test_run_invokes_subprocess(self):
         from fdp import cli
-        with mock.patch.object(sys, "argv",
-                                ["fdp", "run", "echo", "hi"]), \
-                mock.patch.object(cli, "setup_environment"), \
-                mock.patch.object(cli.subprocess, "run",
-                                   return_value=mock.MagicMock(
-                                       returncode=0)) as run_mock:
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "run", "echo", "hi"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            run_mock = stack.enter_context(mock.patch.object(
+                cli.subprocess, "run",
+                return_value=mock.MagicMock(returncode=0)))
             try:
                 cli.main()
             except SystemExit:
@@ -73,12 +110,14 @@ class TestCliLs(unittest.TestCase):
         from fdp import cli
         fake_fs = mock.MagicMock()
         fake_fs.ls.return_value = [mock.MagicMock(__str__=lambda self: "x")]
-        with mock.patch.object(sys, "argv",
-                                ["fdp", "ls", "/some/path"]), \
-                mock.patch.object(cli, "setup_environment"), \
-                mock.patch.object(cli, "FdpFileSystem",
-                                   return_value=fake_fs), \
-                redirect_stdout(io.StringIO()):
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "ls", "/some/path"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            stack.enter_context(mock.patch.object(
+                cli, "FdpFileSystem", return_value=fake_fs))
+            stack.enter_context(redirect_stdout(io.StringIO()))
             try:
                 cli.main()
             except SystemExit:
@@ -89,16 +128,23 @@ class TestCliLs(unittest.TestCase):
 class TestCliDevices(unittest.TestCase):
     def test_devices_lists_discovered(self):
         out, _ = _run_cli(["fdp", "devices"])
-        # The fallback d3d is always present
         self.assertIn("d3d", out)
+
+    def test_devices_empty_when_no_contributors(self):
+        # No installed contributors → nothing listed, no crash.
+        out, _ = _run_cli(["fdp", "devices"], devices=())
+        self.assertEqual(out.strip(), "")
 
 
 class TestCliChat(unittest.TestCase):
     def test_chat_calls_execvpe(self):
         from fdp import cli
-        with mock.patch.object(sys, "argv", ["fdp", "chat"]), \
-                mock.patch.object(cli, "setup_environment"), \
-                mock.patch.object(cli.os, "execvpe") as ev:
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(mock.patch.object(cli.os, "execvpe"))
             try:
                 cli.main()
             except SystemExit:
@@ -113,10 +159,12 @@ class TestCliChat(unittest.TestCase):
 class TestCliQuery(unittest.TestCase):
     def test_query_forwards_prompt(self):
         from fdp import cli
-        with mock.patch.object(sys, "argv",
-                                ["fdp", "query", "hello"]), \
-                mock.patch.object(cli, "setup_environment"), \
-                mock.patch.object(cli.os, "execvpe") as ev:
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "query", "hello"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(mock.patch.object(cli.os, "execvpe"))
             try:
                 cli.main()
             except SystemExit:
@@ -128,17 +176,18 @@ class TestCliQuery(unittest.TestCase):
 class TestDefaultDeviceFlag(unittest.TestCase):
     def test_default_device_passed_to_setup_environment(self):
         from fdp import cli
-        with mock.patch.object(sys, "argv",
-                                ["fdp", "--default-device", "d3d",
-                                 "env"]), \
-                mock.patch.object(cli,
-                                   "setup_environment") as su, \
-                redirect_stdout(io.StringIO()):
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv",
+                ["fdp", "--default-device", "d3d", "env"]))
+            su = stack.enter_context(mock.patch.object(
+                cli, "setup_environment"))
+            stack.enter_context(redirect_stdout(io.StringIO()))
             try:
                 cli.main()
             except SystemExit:
                 pass
-        # setup_environment should have been called with device="d3d"
         kwargs = su.call_args.kwargs
         self.assertEqual(kwargs.get("device"), "d3d")
 
