@@ -33,6 +33,7 @@ from .devices import (
     resolve_default_device,
 )
 from .environment import setup_environment, apply_environment
+from .filesystem import FdpFileSystem
 from . import _version
 
 __version__ = _version.get_versions()["version"]
@@ -45,5 +46,6 @@ __all__ = [
     "resolve_default_device",
     "setup_environment",
     "apply_environment",
+    "FdpFileSystem",
     "__version__",
 ]
