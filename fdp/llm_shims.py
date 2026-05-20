@@ -54,6 +54,13 @@ def _common_passthrough(args) -> list[str]:
         out.extend(["--model", args.model])
     if getattr(args, "max_iterations", None) is not None:
         out.extend(["-n", str(args.max_iterations)])
+    if getattr(args, "gui", False):
+        out.append("--gui")
+    # Only forward --no-browser if --gui is set; bare --no-browser has
+    # no meaning in the underlying CLI.
+    if (getattr(args, "gui", False)
+            and getattr(args, "open_browser", True) is False):
+        out.append("--no-browser")
     return out
 
 

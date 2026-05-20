@@ -96,5 +96,35 @@ class TestDoQuery(unittest.TestCase):
         self.assertEqual(argv[3], "query")
 
 
+class TestGuiPassthrough(unittest.TestCase):
+    def test_gui_flag_forwarded(self):
+        from fdp.llm_shims import _common_passthrough
+        args = SimpleNamespace(backend=None, model=None,
+                                max_iterations=None,
+                                gui=True, open_browser=True)
+        out = _common_passthrough(args)
+        self.assertIn("--gui", out)
+        self.assertNotIn("--no-browser", out)
+
+    def test_no_browser_forwarded_only_with_gui(self):
+        from fdp.llm_shims import _common_passthrough
+        args = SimpleNamespace(backend=None, model=None,
+                                max_iterations=None,
+                                gui=True, open_browser=False)
+        out = _common_passthrough(args)
+        self.assertIn("--gui", out)
+        self.assertIn("--no-browser", out)
+
+    def test_no_browser_alone_is_dropped(self):
+        from fdp.llm_shims import _common_passthrough
+        # --no-browser without --gui has no meaning in the underlying CLI
+        args = SimpleNamespace(backend=None, model=None,
+                                max_iterations=None,
+                                gui=False, open_browser=False)
+        out = _common_passthrough(args)
+        self.assertNotIn("--gui", out)
+        self.assertNotIn("--no-browser", out)
+
+
 if __name__ == "__main__":
     unittest.main()
