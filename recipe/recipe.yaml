@@ -26,7 +26,13 @@ requirements:
     - versioneer
   run:
     - python
-    - xrdcl-pelican
+    # Use the GA-FDP build of the XRootD Pelican plugin. The plain
+    # `xrdcl-pelican` package also registers the pelican:// URL scheme
+    # via XRootD's plugin manager, so installing both alongside
+    # `libfdpio2 -> xrdcl-pelican-fdp` causes two competing handlers
+    # to race in the test env. Picking the FDP-fork name keeps the
+    # plugin set coherent.
+    - xrdcl-pelican-fdp
     - pelicanplatform >=7.24.3,<8
 
 tests:

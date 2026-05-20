@@ -19,7 +19,7 @@ platforms = ["linux-64"]
 
 [dependencies]
 python = ">=3.11,<3.13"
-xrdcl-pelican = "*"
+xrdcl-pelican-fdp = "*"
 pelicanplatform = ">=7.24.3,<8"
 setuptools = "*"
 pip = "*"

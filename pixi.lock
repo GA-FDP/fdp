@@ -55,7 +55,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/versioneer-0.29-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.47.0-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/ga-fdp/linux-64/xrdcl-pelican-1.6.1+fdp_fork-hc11ce1e_3.tar.bz2
+      - conda: https://conda.anaconda.org/ga-fdp/linux-64/xrdcl-pelican-fdp-0.2.0-hc11ce1e_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/xrootd-5.9.2-py312h00f1e7c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.2-h25fd6f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
@@ -628,20 +628,20 @@ packages:
   - pkg:pypi/wheel?source=hash-mapping
   size: 33491
   timestamp: 1776878563806
-- conda: https://conda.anaconda.org/ga-fdp/linux-64/xrdcl-pelican-1.6.1+fdp_fork-hc11ce1e_3.tar.bz2
-  sha256: 583cfab920c8a3856f3b3b8ed9b98cffa5c93c418e5d37b3ac8256ff8539467a
-  md5: 3fa252ea40fa896d4f5cf74023d2b95f
+- conda: https://conda.anaconda.org/ga-fdp/linux-64/xrdcl-pelican-fdp-0.2.0-hc11ce1e_0.conda
+  sha256: ec9c2960e17bc52abed2e50623dcb9c55a47babc497ce1142db7511e338f23df
+  md5: acb20f375159f1f7bbbbcbfa45edc7db
   depends:
   - __glibc >=2.28,<3.0.a0
-  - libcurl >=8.17.0,<9.0a0
+  - libcurl >=8.20.0,<9.0a0
   - libgcc >=14
   - libgfortran
   - libgfortran5 >=14.3.0
   - libstdcxx >=14
   - xrootd >=5.8,<6
-  - xrootd >=5.8.4,<6.0a0
-  size: 631380
-  timestamp: 1762960493978
+  - xrootd >=5.9.2,<6.0a0
+  size: 528117
+  timestamp: 1777493972626
 - conda: https://conda.anaconda.org/conda-forge/linux-64/xrootd-5.9.2-py312h00f1e7c_0.conda
   sha256: 8bafe6a70e6474e589751e05b79a8577314a7e8935de9d90c1302cc022595c27
   md5: 07850f018e13aee32673681991f9a2c7
