@@ -67,3 +67,13 @@ def do_chat(args, device: Device) -> None:
     passthrough = _common_passthrough(args)
     cmd = _build_llm_cmd("chat", passthrough, device)
     os.execvpe(cmd[0], cmd, os.environ)
+
+
+def do_backends(args) -> None:
+    """Exec into ``toksearch.llm.cli backends`` for a clean device-free path.
+
+    Listing is purely metadata, so we don't inject a default --backend
+    or otherwise touch the device.
+    """
+    cmd = [sys.executable, "-m", "toksearch.llm.cli", "backends"]
+    os.execvpe(cmd[0], cmd, os.environ)
