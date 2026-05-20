@@ -213,6 +213,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat = sub.add_parser("chat",
                               help="Interactive conversational query")
     _add_llm_args(p_chat)
+    p_chat.add_argument("--gui", action="store_true",
+                          help="Launch the local Gradio chat GUI "
+                               "instead of the terminal REPL.")
+    p_chat.add_argument("--no-browser", dest="open_browser",
+                          action="store_false", default=True,
+                          help="When --gui is set, do not open a "
+                               "browser tab.")
     p_chat.set_defaults(func=do_chat)
 
     p_query = sub.add_parser("query", help="One-shot query")
