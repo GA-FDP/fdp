@@ -27,6 +27,7 @@ from .devices import (
 )
 from .environment import _generic_config, setup_environment
 from .filesystem import FdpFileSystem
+from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
@@ -136,6 +137,11 @@ def do_query(args) -> None:
     _llm_do_query(args, device)
 
 
+def do_backends(args) -> None:
+    """List available LLM backend presets (delegates to toksearch.llm.cli)."""
+    _llm_do_backends(args)
+
+
 # ----------------------------------------------------------------------
 # argparse wiring
 # ----------------------------------------------------------------------
@@ -187,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_dev = sub.add_parser("devices",
                             help="List installed device contributors")
-    p_dev.set_defaults(func=do_devices)
+    p_dev.set_defaults(func=do_devices, needs_env=False)
 
     p_sk = sub.add_parser("skills",
                            help="Manage AI assistant skills")
@@ -202,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
                               help="claude, cursor, codex, or all")
     sk_install.add_argument("--force", "-f", action="store_true",
                               help="Overwrite already-installed skills")
-    p_sk.set_defaults(func=do_skills)
+    p_sk.set_defaults(func=do_skills, needs_env=False)
 
     p_chat = sub.add_parser("chat",
                               help="Interactive conversational query")
@@ -215,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_llm_args(p_query)
     p_query.set_defaults(func=do_query)
 
+    p_be = sub.add_parser(
+        "backends",
+        help="List available LLM backend presets (built-in, discovered, "
+             "and user-defined).")
+    p_be.set_defaults(func=do_backends, needs_env=False)
+
     return parser
 
 
@@ -222,10 +234,14 @@ def main(argv=None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    setup_environment(
-        device=args.default_device,
-        bearer_token=args.bearer_token or None,
-    )
+    # Pure-metadata subcommands (devices, skills, backends) don't touch
+    # the FDP env and shouldn't require a device contributor to be
+    # installed, so they opt out via `needs_env=False`.
+    if getattr(args, "needs_env", True):
+        setup_environment(
+            device=args.default_device,
+            bearer_token=args.bearer_token or None,
+        )
 
     args.func(args)
 
