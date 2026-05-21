@@ -127,13 +127,24 @@ def do_skills(args) -> None:
         print(f"  {installed} installed, {skipped} skipped")
 
 
+def _resolve_default_device_or_none(args):
+    """Resolve the default device, or return ``None`` if no contributors
+    are installed. chat / query are pure LLM operations and don't need
+    device-specific env, so they degrade gracefully when run in a bare
+    fdp dev env."""
+    try:
+        return resolve_default_device(explicit=args.default_device)
+    except ValueError:
+        return None
+
+
 def do_chat(args) -> None:
-    device = resolve_default_device(explicit=args.default_device)
+    device = _resolve_default_device_or_none(args)
     _llm_do_chat(args, device)
 
 
 def do_query(args) -> None:
-    device = resolve_default_device(explicit=args.default_device)
+    device = _resolve_default_device_or_none(args)
     _llm_do_query(args, device)
 
 
@@ -220,13 +231,16 @@ def build_parser() -> argparse.ArgumentParser:
                           action="store_false", default=True,
                           help="When --gui is set, do not open a "
                                "browser tab.")
-    p_chat.set_defaults(func=do_chat)
+    # chat / query just execvpe into toksearch.llm.cli; no FDP env
+    # setup needed, and they tolerate no device contributor being
+    # installed (useful for working inside the fdp dev env).
+    p_chat.set_defaults(func=do_chat, needs_env=False)
 
     p_query = sub.add_parser("query", help="One-shot query")
     p_query.add_argument("query", type=str,
                            help="Natural-language query (quote it)")
     _add_llm_args(p_query)
-    p_query.set_defaults(func=do_query)
+    p_query.set_defaults(func=do_query, needs_env=False)
 
     p_be = sub.add_parser(
         "backends",

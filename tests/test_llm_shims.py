@@ -53,6 +53,17 @@ class TestBuildLlmCmd(unittest.TestCase):
         cmd = _build_llm_cmd("chat", [], device)
         self.assertNotIn("--backend", cmd)
 
+    def test_no_device_argument_at_all_works(self):
+        """device=None occurs when fdp runs without a device contributor
+        installed (e.g., inside fdp's own pixi dev env)."""
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd("chat", ["--gui"], None)
+        self.assertEqual(cmd[:4],
+                         [sys.executable, "-m", "toksearch.llm.cli",
+                          "chat"])
+        self.assertIn("--gui", cmd)
+        self.assertNotIn("--backend", cmd)
+
 
 class TestDoChat(unittest.TestCase):
     def test_execvpe_called(self):
