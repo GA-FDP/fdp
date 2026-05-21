@@ -73,7 +73,17 @@ def do_query(args, device: Device) -> None:
 def do_chat(args, device: Device) -> None:
     passthrough = _common_passthrough(args)
     cmd = _build_llm_cmd("chat", passthrough, device)
-    os.execvpe(cmd[0], cmd, os.environ)
+    env = os.environ
+    if getattr(args, "gui", False):
+        # Hand the GUI the FDP brand logo so it can stylize its
+        # header. toksearch.llm.gui consults FDP_GUI_LOGO_PATH;
+        # absence is fine and falls back to no logo. Only copy
+        # os.environ when we actually need to mutate it.
+        from . import main_logo_path
+        logo = main_logo_path()
+        if logo and "FDP_GUI_LOGO_PATH" not in os.environ:
+            env = {**os.environ, "FDP_GUI_LOGO_PATH": logo}
+    os.execvpe(cmd[0], cmd, env)
 
 
 def do_backends(args) -> None:

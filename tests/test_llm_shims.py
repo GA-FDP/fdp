@@ -96,6 +96,42 @@ class TestDoQuery(unittest.TestCase):
         self.assertEqual(argv[3], "query")
 
 
+class TestLogoEnvInjection(unittest.TestCase):
+    def test_gui_sets_fdp_gui_logo_path_when_logo_available(self):
+        from fdp import llm_shims as shims
+        device = Device(name="d3d", pelican_root="r", origin_server="o",
+                         default_llm_preset="amsc")
+        args = SimpleNamespace(backend=None, model=None,
+                                max_iterations=None,
+                                gui=True, open_browser=True)
+        import fdp as _fdp
+        with mock.patch.object(_fdp, "main_logo_path",
+                                return_value="/path/to/logo.png"), \
+                mock.patch.dict("os.environ",
+                                 {k: v for k, v in __import__("os").environ.items()
+                                  if k != "FDP_GUI_LOGO_PATH"},
+                                 clear=True), \
+                mock.patch("fdp.llm_shims.os.execvpe") as ev:
+            shims.do_chat(args, device)
+        _, _, env = ev.call_args.args
+        self.assertEqual(env.get("FDP_GUI_LOGO_PATH"),
+                         "/path/to/logo.png")
+
+    def test_no_gui_keeps_os_environ_unchanged(self):
+        # Without --gui, env passes through as os.environ identity.
+        from fdp import llm_shims as shims
+        import os as _os
+        device = Device(name="d3d", pelican_root="r", origin_server="o",
+                         default_llm_preset="amsc")
+        args = SimpleNamespace(backend=None, model=None,
+                                max_iterations=None,
+                                gui=False, open_browser=True)
+        with mock.patch("fdp.llm_shims.os.execvpe") as ev:
+            shims.do_chat(args, device)
+        _, _, env = ev.call_args.args
+        self.assertIs(env, _os.environ)
+
+
 class TestGuiPassthrough(unittest.TestCase):
     def test_gui_flag_forwarded(self):
         from fdp.llm_shims import _common_passthrough

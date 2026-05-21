@@ -25,6 +25,8 @@ Public surface:
 - ``FdpFileSystem``: XRootD wrapper used by ``fdp ls``. (Added in Task 4.)
 """
 
+import os as _os
+
 from .devices import (
     Device,
     list_devices,
@@ -38,6 +40,21 @@ from . import _version
 
 __version__ = _version.get_versions()["version"]
 
+
+def main_logo_path() -> str | None:
+    """Return the filesystem path to the FDP main brand logo, or ``None``.
+
+    The PNG ships as package data under ``fdp/logos/``. Consumers
+    (notably the toksearch chat GUI) call this to stylize their
+    surface with the FDP mark when running inside the platform's
+    ecosystem. Returns ``None`` if the asset isn't installed (e.g.,
+    a sdist-only build or a future stripped-down deployment).
+    """
+    candidate = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                "logos", "FDP Main Logo.png")
+    return candidate if _os.path.isfile(candidate) else None
+
+
 __all__ = [
     "Device",
     "list_devices",
@@ -47,5 +64,6 @@ __all__ = [
     "setup_environment",
     "apply_environment",
     "FdpFileSystem",
+    "main_logo_path",
     "__version__",
 ]

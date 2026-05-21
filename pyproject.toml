@@ -30,6 +30,12 @@ dependencies = []
 [project.scripts]
 fdp = "fdp.cli:main"
 
+# Ship the logos shipped under fdp/logos/ so consumers (notably the
+# toksearch chat GUI) can find the FDP brand image at runtime via
+# fdp.main_logo_path().
+[tool.setuptools.package-data]
+fdp = ["logos/*.png"]
+
 [tool.versioneer]
 VCS = "git"
 style = "pep440"
