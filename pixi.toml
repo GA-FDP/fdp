@@ -24,6 +24,12 @@ pelicanplatform = ">=7.24.3,<8"
 setuptools = "*"
 pip = "*"
 versioneer = "*"
+# Dev-env-only: toksearch isn't a release run-dep (decoupling is the
+# point of the split), but `fdp chat` / `fdp query` execvpe into
+# toksearch.llm.cli, so it must be present in this checkout's pixi env
+# to test those subcommands locally. End users who install fdp via
+# conda also need toksearch in their env to use chat/query.
+toksearch = ">=2.7.3"
 
 [tasks]
 build = "pip install -e . --no-deps"
