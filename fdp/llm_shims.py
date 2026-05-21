@@ -33,12 +33,20 @@ from .devices import Device
 def _build_llm_cmd(
     subcommand: str,
     passthrough_args: list[str],
-    device: Device,
+    device: Device | None,
 ) -> list[str]:
-    """Construct argv for the `toksearch.llm.cli` delegate."""
+    """Construct argv for the `toksearch.llm.cli` delegate.
+
+    ``device`` is ``None`` when no device contributor is installed
+    (typical in fdp's own dev env). In that case we simply skip the
+    default-backend injection; the underlying toksearch CLI uses its
+    own built-in default (``anthropic``) unless the user passed an
+    explicit ``--backend``.
+    """
     cmd = [sys.executable, "-m", "toksearch.llm.cli", subcommand]
     if (
-        device.default_llm_preset
+        device is not None
+        and device.default_llm_preset
         and "--backend" not in passthrough_args
     ):
         cmd.extend(["--backend", device.default_llm_preset])
@@ -64,13 +72,13 @@ def _common_passthrough(args) -> list[str]:
     return out
 
 
-def do_query(args, device: Device) -> None:
+def do_query(args, device: Device | None) -> None:
     passthrough = [args.query] + _common_passthrough(args)
     cmd = _build_llm_cmd("query", passthrough, device)
     os.execvpe(cmd[0], cmd, os.environ)
 
 
-def do_chat(args, device: Device) -> None:
+def do_chat(args, device: Device | None) -> None:
     passthrough = _common_passthrough(args)
     cmd = _build_llm_cmd("chat", passthrough, device)
     env = os.environ
