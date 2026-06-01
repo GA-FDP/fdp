@@ -30,6 +30,9 @@ versioneer = "*"
 # to test those subcommands locally. End users who install fdp via
 # conda also need toksearch in their env to use chat/query.
 toksearch = ">=2.7.3"
+# Phase 1 catalog migration: fdp.catalog loads tokamak YAMLs validated
+# by fdp-schema. Available on the ga-fdp channel.
+fdp-schema = ">=0.1.0"
 
 [tasks]
 build = "pip install -e . --no-deps"
@@ -37,4 +40,3 @@ test = { cmd = "cd tests && ./testit", depends-on = ["build"] }
 
 [pypi-dependencies]
 fdp = { path = ".", editable = true }
-fdp_schema = { path = "../fdp_schema", editable = true }
