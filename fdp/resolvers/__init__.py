@@ -5,15 +5,11 @@
 schema Locator and exposes typed methods appropriate to its backend."""
 
 from .mds_tree import MdsTreeResolver
-# from .ptdata import PtDataResolver   # Task 15
+from .ptdata import PtDataResolver
 # from .sql import SqlResolver         # Task 16
 
 
-# Temporary placeholders so `from fdp.resolvers import ...` works during
-# the staged build. These are replaced in Tasks 15 and 16.
-class PtDataResolver:
-    def __init__(self, model): raise NotImplementedError("Task 15")
-
-
+# Temporary placeholder so `from fdp.resolvers import ...` works during
+# the staged build. Replaced in Task 16.
 class SqlResolver:
     def __init__(self, model): raise NotImplementedError("Task 16")

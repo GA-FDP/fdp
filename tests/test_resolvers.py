@@ -83,3 +83,110 @@ class TestMdsTreeResolver(unittest.TestCase):
         r = MdsTreeResolver(self._model())
         joined = r.joined_path(165920, delim="|")
         self.assertIn("|", joined)
+
+
+class TestPtDataResolver(unittest.TestCase):
+    """Tests use mocked _fetch_index to avoid network."""
+
+    def _model(self, with_auth=True):
+        from fdp_schema import PtDataIndexedLocator, AuthHint
+        kwargs = dict(
+            name="main",
+            transport="pelican",
+            index_dir="pelican://h/idx",
+        )
+        if with_auth:
+            kwargs["auth"] = AuthHint(kind="bearer_token", env="BEARER_TOKEN")
+        return PtDataIndexedLocator(**kwargs)
+
+    def _fake_index(self):
+        """Realistic JSON index shape for shot 200000."""
+        return {
+            "shot": 200000,
+            "pointname_ext": {"IP": ".PWR", "DENSITY": ".D8B"},
+            "ext_location": {
+                ".PWR": "pelican://h/data/200000.PWR",
+                ".D8B": "pelican://h/data/200000.D8B",
+            },
+        }
+
+    def test_index_url_construction_shards_by_100(self):
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())
+        # Shot 165920 → shard 1659
+        self.assertEqual(
+            r._index_url(165920),
+            "pelican://h/idx/1659/165920.json",
+        )
+        # Shot 200000 → shard 2000
+        self.assertEqual(
+            r._index_url(200000),
+            "pelican://h/idx/2000/200000.json",
+        )
+        # Edge: small shot
+        self.assertEqual(r._index_url(50), "pelican://h/idx/0/50.json")
+
+    def test_resolve_returns_url_for_known_pointname(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())
+        with mock.patch.dict(os.environ, {"BEARER_TOKEN": "x"}):
+            with mock.patch.object(r, "_fetch_index", return_value=self._fake_index()):
+                url = r.resolve(200000, "ip")
+        self.assertEqual(url, "pelican://h/data/200000.PWR")
+
+    def test_resolve_pointname_case_insensitive(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())
+        idx = self._fake_index()
+        with mock.patch.dict(os.environ, {"BEARER_TOKEN": "x"}):
+            with mock.patch.object(r, "_fetch_index", return_value=idx):
+                self.assertEqual(r.resolve(200000, "ip"), "pelican://h/data/200000.PWR")
+                self.assertEqual(r.resolve(200000, "Ip"), "pelican://h/data/200000.PWR")
+                self.assertEqual(r.resolve(200000, "IP"), "pelican://h/data/200000.PWR")
+
+    def test_resolve_unknown_pointname_returns_none(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())
+        with mock.patch.dict(os.environ, {"BEARER_TOKEN": "x"}):
+            with mock.patch.object(r, "_fetch_index", return_value=self._fake_index()):
+                self.assertIsNone(r.resolve(200000, "nonexistent"))
+
+    def test_index_cached_after_first_fetch(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())
+        with mock.patch.dict(os.environ, {"BEARER_TOKEN": "x"}):
+            with mock.patch.object(
+                r, "_fetch_index", return_value=self._fake_index()
+            ) as fetch:
+                r.resolve(200000, "ip")
+                r.resolve(200000, "ip")
+                r.resolve(200000, "density")
+                fetch.assert_called_once()  # 3 calls, same shot, one fetch
+
+    def test_missing_auth_env_raises(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model(with_auth=True))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "BEARER_TOKEN"):
+                r.resolve(200000, "ip")
+
+    def test_no_auth_allowed_when_locator_has_no_auth(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model(with_auth=False))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(
+                r, "_fetch_index", return_value=self._fake_index()
+            ):
+                self.assertEqual(r.resolve(200000, "ip"), "pelican://h/data/200000.PWR")
