@@ -190,3 +190,90 @@ class TestPtDataResolver(unittest.TestCase):
                 r, "_fetch_index", return_value=self._fake_index()
             ):
                 self.assertEqual(r.resolve(200000, "ip"), "pelican://h/data/200000.PWR")
+
+
+class TestSqlResolver(unittest.TestCase):
+    def _model(self, **overrides):
+        from fdp_schema import SqlLocator, AuthHint
+        kw = dict(
+            name="d3drdb",
+            driver="mssql",
+            host="d3drdb.gat.com",
+            port=8001,
+            database="d3drdb",
+            tdsver="7.0",
+            auth=AuthHint(kind="password_file", path="~/.D3DRDB.login"),
+        )
+        kw.update(overrides)
+        return SqlLocator(**kw)
+
+    def test_connect_calls_pymssql(self):
+        from unittest import mock
+        from fdp.resolvers.sql import SqlResolver
+
+        r = SqlResolver(self._model())
+        with mock.patch.object(
+            r, "_read_credential", return_value=("user", "pw")
+        ):
+            with mock.patch("pymssql.connect") as connect:
+                r.connect()
+        connect.assert_called_once_with(
+            "d3drdb.gat.com", "user", "pw", "d3drdb", port="8001"
+        )
+
+    def test_connect_sets_tdsver(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.sql import SqlResolver
+
+        r = SqlResolver(self._model())
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(
+                r, "_read_credential", return_value=("u", "p")
+            ):
+                with mock.patch("pymssql.connect"):
+                    r.connect()
+            self.assertEqual(os.environ.get("TDSVER"), "7.0")
+
+    def test_connect_setdefault_does_not_override_tdsver(self):
+        import os
+        from unittest import mock
+        from fdp.resolvers.sql import SqlResolver
+
+        r = SqlResolver(self._model(tdsver="7.0"))
+        with mock.patch.dict(os.environ, {"TDSVER": "8.0"}, clear=True):
+            with mock.patch.object(
+                r, "_read_credential", return_value=("u", "p")
+            ):
+                with mock.patch("pymssql.connect"):
+                    r.connect()
+            # setdefault: pre-existing 8.0 is kept.
+            self.assertEqual(os.environ["TDSVER"], "8.0")
+
+    def test_connect_explicit_credentials(self):
+        from unittest import mock
+        from fdp.resolvers.sql import SqlResolver
+
+        r = SqlResolver(self._model())
+        with mock.patch("pymssql.connect") as connect:
+            r.connect(username="explicit_user", password="explicit_pw")
+        connect.assert_called_once_with(
+            "d3drdb.gat.com", "explicit_user", "explicit_pw", "d3drdb",
+            port="8001",
+        )
+
+    def test_read_credential_from_password_file(self):
+        from unittest import mock
+        from fdp.resolvers.sql import SqlResolver
+        r = SqlResolver(self._model())
+        with mock.patch(
+            "pathlib.Path.read_text", return_value="theuser\nthepass\n"
+        ):
+            u, p = r._read_credential()
+        self.assertEqual((u, p), ("theuser", "thepass"))
+
+    def test_unsupported_driver_raises(self):
+        from fdp.resolvers.sql import SqlResolver
+        r = SqlResolver(self._model(driver="postgres"))
+        with self.assertRaises(NotImplementedError):
+            r.connect()
