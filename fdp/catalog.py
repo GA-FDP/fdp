@@ -47,5 +47,58 @@ class _Catalog:
     def names(self) -> list[str]:
         return sorted(self._load())
 
+    def __getitem__(self, name: str) -> "TokamakHandle":
+        loaded = self._load()
+        if name not in loaded:
+            raise KeyError(name)
+        return TokamakHandle(loaded[name])
+
+
+from fdp_schema import MdsTreeLocator, PtDataIndexedLocator, SqlLocator
+
+
+def _wrap(loc):
+    """Dispatch a Locator subtype to its Resolver."""
+    from fdp.resolvers import MdsTreeResolver, PtDataResolver, SqlResolver
+    return {
+        MdsTreeLocator:        MdsTreeResolver,
+        PtDataIndexedLocator:  PtDataResolver,
+        SqlLocator:            SqlResolver,
+    }[type(loc)](loc)
+
+
+class TokamakHandle:
+    """fdp-side wrapper around a fdp_schema.Tokamak. Adds typed resolver
+    methods; the underlying schema model is exposed via `.schema` as an
+    escape hatch."""
+
+    def __init__(self, model):
+        self._model = model
+
+    @property
+    def name(self) -> str:        return self._model.name
+
+    @property
+    def description(self) -> str: return self._model.description
+
+    @property
+    def extra_env(self) -> dict:  return self._model.extra_env
+
+    @property
+    def schema(self):             return self._model
+
+    def locator(self, kind: str, name: str = "main"):
+        matches = [l for l in self._model.locators
+                   if l.kind == kind and l.name == name]
+        if not matches:
+            raise KeyError(
+                f"No locator with kind={kind!r} name={name!r} on {self.name!r}"
+            )
+        if len(matches) > 1:
+            raise KeyError(
+                f"Multiple locators with kind={kind!r} name={name!r} on {self.name!r}"
+            )
+        return _wrap(matches[0])
+
 
 catalog = _Catalog()

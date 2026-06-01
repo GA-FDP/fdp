@@ -68,3 +68,76 @@ class TestCatalogSingleton(unittest.TestCase):
         ]
         with mock.patch("fdp.catalog.entry_points", return_value=eps):
             self.assertEqual(c.names(), ["d3d", "kstar"])
+
+
+class TestTokamakHandle(unittest.TestCase):
+    YAML = """
+schema_version: 1
+name: d3d
+description: DIII-D
+locators:
+  - kind: mds_tree
+    name: main
+    transport: pelican
+    search_path: [u1, u2]
+  - kind: mds_tree
+    name: backup
+    transport: pelican
+    search_path: [b1]
+  - kind: ptdata_indexed
+    name: main
+    transport: pelican
+    index_dir: idx
+extra_env: { D3DATA: "yes" }
+"""
+
+    def _catalog(self):
+        from fdp.catalog import _Catalog
+        c = _Catalog()
+        ep = _make_mock_ep("d3d", self.YAML)
+        return c, ep
+
+    def test_getitem_returns_handle(self):
+        from fdp.catalog import TokamakHandle
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            handle = c["d3d"]
+        self.assertIsInstance(handle, TokamakHandle)
+        self.assertEqual(handle.name, "d3d")
+        self.assertEqual(handle.description, "DIII-D")
+        self.assertEqual(handle.extra_env, {"D3DATA": "yes"})
+
+    def test_handle_schema_is_raw_model(self):
+        from fdp_schema import Tokamak
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            handle = c["d3d"]
+        self.assertIsInstance(handle.schema, Tokamak)
+
+    def test_locator_default_name_main(self):
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            handle = c["d3d"]
+            loc = handle.locator("mds_tree")  # default name="main"
+        self.assertEqual(loc.model.name, "main")
+
+    def test_locator_explicit_name(self):
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            handle = c["d3d"]
+            loc = handle.locator("mds_tree", name="backup")
+        self.assertEqual(loc.model.name, "backup")
+        self.assertEqual(loc.model.search_path, ["b1"])
+
+    def test_locator_not_found_raises(self):
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            handle = c["d3d"]
+            with self.assertRaises(KeyError):
+                handle.locator("sql")  # no sql locator in this fixture
+
+    def test_unknown_tokamak_raises(self):
+        c, ep = self._catalog()
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            with self.assertRaises(KeyError):
+                c["nonexistent"]
