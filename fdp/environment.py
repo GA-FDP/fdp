@@ -87,6 +87,33 @@ def _generic_config() -> dict:
     }
 
 
+def _tokamak_env(handle) -> dict[str, str]:
+    """Derive tokamak-specific env vars from a TokamakHandle's locators.
+
+    Output mirrors the legacy Device.to_env() for D3D byte-for-byte —
+    pinned by test_env_parity.py.
+    """
+    out: dict[str, str] = {}
+    delim = handle.extra_env.get("SYS_D3_DELIM", ";")
+
+    # default_tree_path = delim-joined search_path entries from all
+    # mds_tree locators (v1: one per tokamak, but the schema permits more).
+    mds = [l for l in handle.schema.locators if l.kind == "mds_tree"]
+    if mds:
+        out["default_tree_path"] = delim.join(
+            p for m in mds for p in m.search_path
+        )
+
+    # PTDATA_JSON_INDEX_DIR — last ptdata_indexed wins if multiple.
+    ptd = [l for l in handle.schema.locators if l.kind == "ptdata_indexed"]
+    if ptd:
+        out["PTDATA_JSON_INDEX_DIR"] = ptd[-1].index_dir
+
+    # extra_env passes through verbatim.
+    out.update(handle.extra_env)
+    return out
+
+
 def apply_environment(config: dict, env: dict) -> None:
     """Apply config to env, preserving existing values except PATH.
 
