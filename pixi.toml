@@ -37,3 +37,4 @@ test = { cmd = "cd tests && ./testit", depends-on = ["build"] }
 
 [pypi-dependencies]
 fdp = { path = ".", editable = true }
+fdp_schema = { path = "../fdp_schema", editable = true }
