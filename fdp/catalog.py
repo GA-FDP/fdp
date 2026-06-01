@@ -55,11 +55,11 @@ class _Catalog:
 
 
 from fdp_schema import MdsTreeLocator, PtDataIndexedLocator, SqlLocator
+from fdp.resolvers import MdsTreeResolver, PtDataResolver, SqlResolver
 
 
 def _wrap(loc):
     """Dispatch a Locator subtype to its Resolver."""
-    from fdp.resolvers import MdsTreeResolver, PtDataResolver, SqlResolver
     return {
         MdsTreeLocator:        MdsTreeResolver,
         PtDataIndexedLocator:  PtDataResolver,
