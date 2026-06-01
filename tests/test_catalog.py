@@ -153,6 +153,41 @@ _SKIP_INTEGRATION = not _d3d_ep_available()
 _SKIP_REASON = "toksearch_d3d fdp_schema.catalogs entry point not installed (run from toksearch_d3d env)"
 
 
+class TestCatalogCli(unittest.TestCase):
+    """Run the fdp catalog CLI subcommands and check output."""
+
+    @unittest.skipUnless(
+        bool(__import__("importlib.metadata", fromlist=["entry_points"])
+             .entry_points(group="fdp_schema.catalogs")),
+        "Requires entry point installed",
+    )
+    def test_catalog_list_prints_d3d(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from fdp.cli import main as cli_main
+        with redirect_stdout(StringIO()) as buf:
+            cli_main(["catalog", "list"])
+        output = buf.getvalue()
+        self.assertIn("d3d", output)
+        self.assertIn("DIII-D", output)
+
+    @unittest.skipUnless(
+        bool(__import__("importlib.metadata", fromlist=["entry_points"])
+             .entry_points(group="fdp_schema.catalogs")),
+        "Requires entry point installed",
+    )
+    def test_catalog_show_d3d_includes_locators(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from fdp.cli import main as cli_main
+        with redirect_stdout(StringIO()) as buf:
+            cli_main(["catalog", "show", "d3d"])
+        output = buf.getvalue()
+        self.assertIn("mds_tree", output)
+        self.assertIn("ptdata_indexed", output)
+        self.assertIn("d3drdb", output)
+
+
 @unittest.skipIf(_SKIP_INTEGRATION, _SKIP_REASON)
 class TestCatalogIntegration(unittest.TestCase):
     """End-to-end with the real toksearch_d3d entry point installed."""

@@ -16,19 +16,18 @@
 
 Public surface:
 
-- ``Device``: tokamak data-platform config contributed via the
-  ``fdp.devices`` entry point.
+- ``catalog``: Tokamak catalog singleton (fdp_schema.catalogs entry points).
 - ``list_devices()`` / ``get_device(name)`` / ``current_device()``:
-  introspection.
+  legacy device introspection (kept for backward compat; prefer catalog).
 - ``setup_environment(device=None, bearer_token=None)``: apply FDP env
-  vars to ``os.environ`` for the chosen device. (Added in Task 3.)
+  vars to ``os.environ`` for the chosen device/tokamak. (Added in Task 3.)
 - ``FdpFileSystem``: XRootD wrapper used by ``fdp ls``. (Added in Task 4.)
 """
 
 import os as _os
 
+from .catalog import catalog
 from .devices import (
-    Device,
     list_devices,
     get_device,
     current_device,
@@ -56,7 +55,7 @@ def main_logo_path() -> str | None:
 
 
 __all__ = [
-    "Device",
+    "catalog",
     "list_devices",
     "get_device",
     "current_device",

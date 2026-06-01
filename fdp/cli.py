@@ -21,11 +21,10 @@ import sys
 from pathlib import Path
 
 from .devices import (
-    discover_devices,
-    get_device,
     resolve_default_device,
 )
-from .environment import _generic_config, setup_environment
+from .catalog import catalog
+from .environment import _generic_config, _resolve_device_env, setup_environment
 from .filesystem import FdpFileSystem
 from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
@@ -38,9 +37,8 @@ from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 # ----------------------------------------------------------------------
 
 def do_env(args) -> None:
-    device = resolve_default_device(explicit=args.default_device)
     config = _generic_config()
-    config.update(device.to_env())
+    config.update(_resolve_device_env(args.default_device))
     for key, value in config.items():
         if value is None:
             continue
@@ -61,9 +59,25 @@ def do_run(args) -> None:
     sys.exit(result.returncode)
 
 
+def _resolve_origin_server(device_name: str | None) -> str:
+    """Return the origin_server for the given device/tokamak name.
+
+    Prefers the catalog; falls back to legacy Device.
+    """
+    if device_name is not None and device_name in catalog:
+        return catalog[device_name].schema.origin_server
+    # Try catalog auto-detect
+    names = catalog.names()
+    if len(names) == 1:
+        return catalog[names[0]].schema.origin_server
+    # Legacy fallback
+    device = resolve_default_device(explicit=device_name)
+    return device.origin_server
+
+
 def do_ls(args) -> None:
-    device = resolve_default_device(explicit=args.default_device)
-    fs = FdpFileSystem(device.origin_server)
+    origin = _resolve_origin_server(args.default_device)
+    fs = FdpFileSystem(origin)
     listing = fs.ls(args.path, dirs_only=args.dirs_only)
     if listing:
         for entry in listing:
@@ -73,18 +87,17 @@ def do_ls(args) -> None:
         sys.exit(1)
 
 
-def do_devices(args) -> None:
-    devices = discover_devices()
-    try:
-        default = resolve_default_device(explicit=args.default_device)
-        default_name = default.name
-    except ValueError:
-        default_name = None
-    for name in sorted(devices):
-        d = devices[name]
-        marker = " (default)" if name == default_name else ""
-        desc = f" - {d.description}" if d.description else ""
-        print(f"{name}{marker}{desc}")
+def do_catalog(args) -> None:
+    if args.subcmd == "list":
+        for name in catalog.names():
+            tk = catalog[name]
+            print(f"{name}\t{tk.description}")
+    elif args.subcmd == "show":
+        tk = catalog[args.name]
+        import yaml
+        print(yaml.safe_dump(tk.schema.model_dump(), sort_keys=False))
+    else:
+        raise ValueError(f"Unknown catalog subcommand: {args.subcmd!r}")
 
 
 def do_skills(args) -> None:
@@ -202,9 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="The path whose contents will be listed")
     p_ls.set_defaults(func=do_ls)
 
-    p_dev = sub.add_parser("devices",
-                            help="List installed device contributors")
-    p_dev.set_defaults(func=do_devices, needs_env=False)
+    p_cat = sub.add_parser("catalog", help="Inspect the tokamak catalog")
+    cat_sub = p_cat.add_subparsers(dest="subcmd", required=True)
+    cat_sub.add_parser("list", help="List tokamak names and descriptions")
+    show = cat_sub.add_parser("show", help="Print a tokamak's full catalog YAML")
+    show.add_argument("name")
+    p_cat.set_defaults(func=do_catalog, needs_env=False)
 
     p_sk = sub.add_parser("skills",
                            help="Manage AI assistant skills")

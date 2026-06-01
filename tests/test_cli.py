@@ -125,15 +125,82 @@ class TestCliLs(unittest.TestCase):
         fake_fs.ls.assert_called_once_with("/some/path", dirs_only=False)
 
 
-class TestCliDevices(unittest.TestCase):
-    def test_devices_lists_discovered(self):
-        out, _ = _run_cli(["fdp", "devices"])
-        self.assertIn("d3d", out)
+class TestCliCatalog(unittest.TestCase):
+    """Tests for the 'fdp catalog' subcommands."""
 
-    def test_devices_empty_when_no_contributors(self):
-        # No installed contributors → nothing listed, no crash.
-        out, _ = _run_cli(["fdp", "devices"], devices=())
-        self.assertEqual(out.strip(), "")
+    _CATALOG_YAML = """
+schema_version: 1
+name: d3d
+description: DIII-D tokamak
+locators:
+  - kind: mds_tree
+    name: main
+    transport: pelican
+    search_path: [pelican://test/fdp-d3d/mds/~t]
+  - kind: ptdata_indexed
+    name: main
+    transport: pelican
+    index_dir: pelican://test/fdp-d3d/ptdata/index
+  - kind: sql
+    name: d3drdb
+    driver: mssql
+    host: d3drdb.gat.com
+    port: 8001
+    database: d3drdb
+extra_env: {D3DATA: /d3d/data}
+"""
+
+    def _make_mock_ep(self):
+        from unittest import mock
+        ep = mock.MagicMock()
+        ep.name = "d3d"
+        ep.value = "mock:d3d"
+        src = mock.MagicMock()
+        src.read_text.return_value = self._CATALOG_YAML
+        ep.load.return_value = src
+        return ep
+
+    def test_catalog_list_prints_name_and_description(self):
+        from fdp import cli
+        from fdp.catalog import _Catalog
+        ep = self._make_mock_ep()
+        mock_catalog = _Catalog()
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "list"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
+            stack.enter_context(mock.patch.object(cli, "catalog", mock_catalog))
+            buf = io.StringIO()
+            stack.enter_context(redirect_stdout(buf))
+            try:
+                cli.main()
+            except SystemExit:
+                pass
+        output = buf.getvalue()
+        self.assertIn("d3d", output)
+        self.assertIn("DIII-D", output)
+
+    def test_catalog_show_prints_yaml(self):
+        from fdp import cli
+        from fdp.catalog import _Catalog
+        ep = self._make_mock_ep()
+        mock_catalog = _Catalog()
+        with ExitStack() as stack:
+            _patch_devices(stack)
+            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "show", "d3d"]))
+            stack.enter_context(mock.patch.object(cli, "setup_environment"))
+            stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
+            stack.enter_context(mock.patch.object(cli, "catalog", mock_catalog))
+            buf = io.StringIO()
+            stack.enter_context(redirect_stdout(buf))
+            try:
+                cli.main()
+            except SystemExit:
+                pass
+        output = buf.getvalue()
+        self.assertIn("mds_tree", output)
+        self.assertIn("ptdata_indexed", output)
 
 
 class TestCliChat(unittest.TestCase):

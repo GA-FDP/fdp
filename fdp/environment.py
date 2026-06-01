@@ -26,6 +26,7 @@ import warnings
 from pathlib import Path
 
 from .devices import Device, resolve_default_device
+from .catalog import catalog as _catalog
 
 
 def _get_default_xrd_pluginconfdir() -> str | None:
@@ -129,16 +130,41 @@ def apply_environment(config: dict, env: dict) -> None:
         env.setdefault(k, str(v))
 
 
+def _resolve_device_env(device: "str | Device | None") -> dict:
+    """Return device-specific env vars from the catalog (preferred) or
+    legacy Device. This is the internal bridge used by setup_environment
+    and do_env in the CLI.
+
+    Resolution order:
+      1. If `device` is a Device instance → use device.to_env() directly.
+      2. If `device` is a str and exists in the catalog → use _tokamak_env().
+      3. Otherwise fall back to resolve_default_device (legacy).
+    """
+    if isinstance(device, Device):
+        return device.to_env()
+    if device is not None and device in _catalog:
+        return _tokamak_env(_catalog[device])
+    # Fall back to legacy device resolution — also handles the case where
+    # device is None (auto-detect from env / config.toml).
+    if device is None:
+        # Try catalog auto-detect: if exactly one entry, use it.
+        names = _catalog.names()
+        if len(names) == 1:
+            return _tokamak_env(_catalog[names[0]])
+    active = resolve_default_device(explicit=device if isinstance(device, str) else None)
+    return active.to_env()
+
+
 def setup_environment(
-    device: str | Device | None = None,
+    device: "str | Device | None" = None,
     bearer_token: str | None = None,
     **overrides,
 ) -> None:
     """Populate os.environ with FDP variables and resolve BEARER_TOKEN.
 
-    Resolves the active device (via `resolve_default_device`), merges
-    its env contribution with the generic FDP config, and applies the
-    result to ``os.environ``.
+    Resolves the active device/tokamak (catalog preferred, legacy Device
+    fallback), merges its env contribution with the generic FDP config,
+    and applies the result to ``os.environ``.
 
     Args:
         device: Optional device name (str) or Device instance to override
@@ -150,13 +176,8 @@ def setup_environment(
 
     Mutates os.environ in place. Safe to call multiple times.
     """
-    if isinstance(device, Device):
-        active = device
-    else:
-        active = resolve_default_device(explicit=device)
-
     config = _generic_config()
-    config.update(active.to_env())
+    config.update(_resolve_device_env(device))
     apply_environment(config, os.environ)
 
     for key, value in overrides.items():

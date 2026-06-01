@@ -125,11 +125,18 @@ class TestSetupEnvironment(unittest.TestCase):
         self.assertIn("fdp-d3d", os.environ["default_tree_path"])
 
     def test_no_devices_installed_raises(self):
-        # With no contributors, fdp can't pick a default.
+        # With no contributors in either the legacy device system or the
+        # catalog, setup_environment can't pick a default and should raise.
         self._ep_patch.stop()
         clear_device_cache()
         try:
-            with mock.patch("fdp.devices._entry_points", return_value=[]):
+            # Patch both the legacy device entry points and the catalog
+            # entry points so neither has any contributors.
+            with mock.patch("fdp.devices._entry_points", return_value=[]), \
+                 mock.patch("fdp.catalog.entry_points", return_value=[]):
+                # Reset catalog cache so the empty patch takes effect.
+                from fdp.catalog import catalog as _cat
+                _cat._cache = None
                 with self.assertRaises(ValueError):
                     setup_environment(bearer_token="dummy")
         finally:
@@ -139,6 +146,9 @@ class TestSetupEnvironment(unittest.TestCase):
                 return_value=[_fake_ep("d3d", _D3D_TEST_DEVICE)],
             )
             self._ep_patch.start()
+            # Reset the catalog cache so subsequent tests see real data.
+            from fdp.catalog import catalog as _cat
+            _cat._cache = None
 
 
 if __name__ == "__main__":
