@@ -34,6 +34,8 @@ requirements:
     # plugin set coherent.
     - xrdcl-pelican-fdp
     - pelicanplatform >=7.24.3,<8
+    - fdp-schema
+    - toksearch
 
 tests:
   - script:
