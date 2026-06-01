@@ -141,3 +141,45 @@ extra_env: { D3DATA: "yes" }
         with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
             with self.assertRaises(KeyError):
                 c["nonexistent"]
+
+
+def _d3d_ep_available() -> bool:
+    """Return True iff the toksearch_d3d d3d entry point is registered."""
+    from importlib.metadata import entry_points
+    return any(ep.name == "d3d" for ep in entry_points(group="fdp_schema.catalogs"))
+
+
+_SKIP_INTEGRATION = not _d3d_ep_available()
+_SKIP_REASON = "toksearch_d3d fdp_schema.catalogs entry point not installed (run from toksearch_d3d env)"
+
+
+@unittest.skipIf(_SKIP_INTEGRATION, _SKIP_REASON)
+class TestCatalogIntegration(unittest.TestCase):
+    """End-to-end with the real toksearch_d3d entry point installed."""
+
+    def test_d3d_handle_exposes_real_locators(self):
+        from fdp.catalog import catalog
+        tk = catalog["d3d"]
+        self.assertEqual(tk.name, "d3d")
+        self.assertIn("D3DATA", tk.extra_env)
+
+    def test_d3d_mds_tree_resolver_works(self):
+        from fdp.catalog import catalog
+        from fdp.resolvers.mds_tree import MdsTreeResolver
+        loc = catalog["d3d"].locator("mds_tree")
+        self.assertIsInstance(loc, MdsTreeResolver)
+        urls = loc.urls_for(165920)
+        self.assertEqual(len(urls), 4)  # four D3D search-path entries
+        # Tokens should be expanded — no ~ in concrete URLs
+        for u in urls:
+            self.assertNotIn("~", u)
+
+    def test_d3d_sql_locator_metadata_present(self):
+        from fdp.catalog import catalog
+        from fdp.resolvers.sql import SqlResolver
+        loc = catalog["d3d"].locator("sql", name="d3drdb")
+        self.assertIsInstance(loc, SqlResolver)
+        self.assertEqual(loc.model.host, "d3drdb.gat.com")
+        self.assertEqual(loc.model.port, 8001)
+        self.assertEqual(loc.model.database, "d3drdb")
+        self.assertEqual(loc.model.tdsver, "7.0")
