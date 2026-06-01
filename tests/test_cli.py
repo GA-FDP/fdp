@@ -24,47 +24,57 @@ import unittest
 from contextlib import ExitStack, redirect_stdout
 from unittest import mock
 
-from fdp.devices import Device, clear_device_cache
+
+# Minimal catalog YAML for a fake d3d test tokamak.
+_D3D_TEST_YAML = """\
+schema_version: 1
+name: d3d
+description: DIII-D tokamak (test)
+locators:
+  - kind: mds_tree
+    name: main
+    transport: pelican
+    search_path: [pelican://test/fdp-d3d/mds/~t]
+  - kind: ptdata_indexed
+    name: main
+    transport: pelican
+    index_dir: pelican://test/fdp-d3d/ptdata/index
+  - kind: sql
+    name: d3drdb
+    driver: mssql
+    host: d3drdb.gat.com
+    port: 8001
+    database: d3drdb
+extra_env: {D3DATA: /d3d/data}
+"""
 
 
-_TEST_D3D = Device(
-    name="d3d",
-    pelican_root="pelican://test/fdp-d3d",
-    origin_server="root://test:8443",
-    mds_default_tree_path="pelican://test/fdp-d3d/mds/~t",
-    description="test d3d",
-)
-
-
-def _fake_ep(name, value):
+def _make_catalog_ep(name: str, yaml_text: str):
+    src = mock.MagicMock()
+    src.read_text.return_value = yaml_text
     ep = mock.MagicMock()
     ep.name = name
-    ep.load.return_value = value
+    ep.load.return_value = src
     return ep
 
 
-def _patch_devices(stack, devices=((_TEST_D3D.name, _TEST_D3D),)):
-    """Context-manager hook used by the helpers below.
-
-    fdp no longer ships a fallback Device, so CLI tests that don't
-    otherwise care about device discovery still need at least one
-    contributor registered for resolve_default_device() to succeed.
-    """
-    clear_device_cache()
-    stack.callback(clear_device_cache)
-    stack.enter_context(mock.patch(
-        "fdp.devices._entry_points",
-        return_value=[_fake_ep(n, d) for n, d in devices],
-    ))
+def _patch_catalog(stack, yaml_text: str = _D3D_TEST_YAML):
+    """Patch the catalog entry points and reset the cache."""
+    from fdp.catalog import catalog as _cat
+    ep = _make_catalog_ep("d3d", yaml_text)
+    stack.enter_context(mock.patch("fdp.catalog.entry_points",
+                                    return_value=[ep]))
+    _cat._cache = None
+    stack.callback(lambda: setattr(_cat, "_cache", None))
 
 
-def _run_cli(argv, devices=((_TEST_D3D.name, _TEST_D3D),)):
+def _run_cli(argv, yaml_text: str = _D3D_TEST_YAML):
     """Invoke fdp.cli.main with mocks; return (stdout, exit_code)."""
     from fdp import cli
     buf = io.StringIO()
     exit_code = None
     with ExitStack() as stack:
-        _patch_devices(stack, devices)
+        _patch_catalog(stack, yaml_text)
         stack.enter_context(mock.patch.object(sys, "argv", argv))
         stack.enter_context(mock.patch.object(cli, "setup_environment"))
         stack.enter_context(redirect_stdout(buf))
@@ -89,7 +99,7 @@ class TestCliRun(unittest.TestCase):
     def test_run_invokes_subprocess(self):
         from fdp import cli
         with ExitStack() as stack:
-            _patch_devices(stack)
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "run", "echo", "hi"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
@@ -111,7 +121,7 @@ class TestCliLs(unittest.TestCase):
         fake_fs = mock.MagicMock()
         fake_fs.ls.return_value = [mock.MagicMock(__str__=lambda self: "x")]
         with ExitStack() as stack:
-            _patch_devices(stack)
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "ls", "/some/path"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
@@ -128,7 +138,7 @@ class TestCliLs(unittest.TestCase):
 class TestCliCatalog(unittest.TestCase):
     """Tests for the 'fdp catalog' subcommands."""
 
-    _CATALOG_YAML = """
+    _CATALOG_YAML = """\
 schema_version: 1
 name: d3d
 description: DIII-D tokamak
@@ -151,7 +161,6 @@ extra_env: {D3DATA: /d3d/data}
 """
 
     def _make_mock_ep(self):
-        from unittest import mock
         ep = mock.MagicMock()
         ep.name = "d3d"
         ep.value = "mock:d3d"
@@ -166,7 +175,6 @@ extra_env: {D3DATA: /d3d/data}
         ep = self._make_mock_ep()
         mock_catalog = _Catalog()
         with ExitStack() as stack:
-            _patch_devices(stack)
             stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "list"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
             stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
@@ -187,7 +195,6 @@ extra_env: {D3DATA: /d3d/data}
         ep = self._make_mock_ep()
         mock_catalog = _Catalog()
         with ExitStack() as stack:
-            _patch_devices(stack)
             stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "show", "d3d"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
             stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
@@ -207,7 +214,7 @@ class TestCliChat(unittest.TestCase):
     def test_chat_calls_execvpe(self):
         from fdp import cli
         with ExitStack() as stack:
-            _patch_devices(stack)
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "chat"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
@@ -227,7 +234,7 @@ class TestCliQuery(unittest.TestCase):
     def test_query_forwards_prompt(self):
         from fdp import cli
         with ExitStack() as stack:
-            _patch_devices(stack)
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "query", "hello"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
@@ -244,7 +251,7 @@ class TestDefaultDeviceFlag(unittest.TestCase):
     def test_default_device_passed_to_setup_environment(self):
         from fdp import cli
         with ExitStack() as stack:
-            _patch_devices(stack)
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv",
                 ["fdp", "--default-device", "d3d", "env"]))

@@ -20,9 +20,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .devices import (
-    resolve_default_device,
-)
 from .catalog import catalog
 from .environment import _generic_config, _resolve_device_env, setup_environment
 from .filesystem import FdpFileSystem
@@ -60,19 +57,24 @@ def do_run(args) -> None:
 
 
 def _resolve_origin_server(device_name: str | None) -> str:
-    """Return the origin_server for the given device/tokamak name.
+    """Return the origin_server for the given tokamak name.
 
-    Prefers the catalog; falls back to legacy Device.
+    If device_name is None, auto-selects when exactly one tokamak is
+    registered. Raises ``KeyError`` if the name is not found and
+    ``ValueError`` if no default can be determined.
     """
-    if device_name is not None and device_name in catalog:
+    if device_name is not None:
         return catalog[device_name].schema.origin_server
-    # Try catalog auto-detect
+    # Auto-detect
     names = catalog.names()
     if len(names) == 1:
         return catalog[names[0]].schema.origin_server
-    # Legacy fallback
-    device = resolve_default_device(explicit=device_name)
-    return device.origin_server
+    if len(names) == 0:
+        raise ValueError("No tokamak contributors are installed.")
+    raise ValueError(
+        f"No default tokamak selected and {len(names)} are registered "
+        f"({names}). Pass --default-device."
+    )
 
 
 def do_ls(args) -> None:
@@ -140,25 +142,30 @@ def do_skills(args) -> None:
         print(f"  {installed} installed, {skipped} skipped")
 
 
-def _resolve_default_device_or_none(args):
-    """Resolve the default device, or return ``None`` if no contributors
-    are installed. chat / query are pure LLM operations and don't need
-    device-specific env, so they degrade gracefully when run in a bare
-    fdp dev env."""
+def _resolve_default_handle_or_none(args):
+    """Resolve the default tokamak handle, or return ``None`` if no
+    contributors are installed. chat / query are pure LLM operations and
+    degrade gracefully when run in a bare fdp dev env."""
     try:
-        return resolve_default_device(explicit=args.default_device)
-    except ValueError:
+        name = args.default_device
+        if name is not None:
+            return catalog[name]
+        names = catalog.names()
+        if len(names) == 1:
+            return catalog[names[0]]
+        return None
+    except (KeyError, ValueError):
         return None
 
 
 def do_chat(args) -> None:
-    device = _resolve_default_device_or_none(args)
-    _llm_do_chat(args, device)
+    handle = _resolve_default_handle_or_none(args)
+    _llm_do_chat(args, handle)
 
 
 def do_query(args) -> None:
-    device = _resolve_default_device_or_none(args)
-    _llm_do_query(args, device)
+    handle = _resolve_default_handle_or_none(args)
+    _llm_do_query(args, handle)
 
 
 def do_backends(args) -> None:

@@ -15,9 +15,9 @@
 """FDP environment configuration.
 
 Two halves: a *generic* config (XRootD plugin path, thread-affinity vars,
-TDSVER, etc.) that applies regardless of device; and a *device* config
-(MDSplus tree paths, PTData index, etc.) supplied by a `Device`. Merged
-into ``os.environ`` by ``setup_environment``.
+TDSVER, etc.) that applies regardless of tokamak; and a *tokamak* config
+(MDSplus tree paths, PTData index, etc.) from the catalog. Merged into
+``os.environ`` by ``setup_environment``.
 """
 
 import os
@@ -25,7 +25,6 @@ import sys
 import warnings
 from pathlib import Path
 
-from .devices import Device, resolve_default_device
 from .catalog import catalog as _catalog
 
 
@@ -130,45 +129,50 @@ def apply_environment(config: dict, env: dict) -> None:
         env.setdefault(k, str(v))
 
 
-def _resolve_device_env(device: "str | Device | None") -> dict:
-    """Return device-specific env vars from the catalog (preferred) or
-    legacy Device. This is the internal bridge used by setup_environment
-    and do_env in the CLI.
+def _resolve_device_env(device: str | None) -> dict:
+    """Return tokamak-specific env vars from the catalog.
 
-    Resolution order:
-      1. If `device` is a Device instance → use device.to_env() directly.
-      2. If `device` is a str and exists in the catalog → use _tokamak_env().
-      3. Otherwise fall back to resolve_default_device (legacy).
+    Resolution order (first match wins):
+      1. ``device`` argument if supplied.
+      2. ``$FDP_DEFAULT_DEVICE`` environment variable.
+      3. Auto-select if exactly one tokamak is registered.
+
+    Raises ``KeyError`` if the named tokamak isn't in the catalog and
+    ``ValueError`` if no default can be determined (0 or 2+ registered).
     """
-    if isinstance(device, Device):
-        return device.to_env()
-    if device is not None and device in _catalog:
-        return _tokamak_env(_catalog[device])
-    # Fall back to legacy device resolution — also handles the case where
-    # device is None (auto-detect from env / config.toml).
     if device is None:
-        # Try catalog auto-detect: if exactly one entry, use it.
-        names = _catalog.names()
-        if len(names) == 1:
-            return _tokamak_env(_catalog[names[0]])
-    active = resolve_default_device(explicit=device if isinstance(device, str) else None)
-    return active.to_env()
+        device = os.environ.get("FDP_DEFAULT_DEVICE") or None
+    if device is not None:
+        return _tokamak_env(_catalog[device])
+    # Auto-detect: if exactly one tokamak is registered, use it.
+    names = _catalog.names()
+    if len(names) == 1:
+        return _tokamak_env(_catalog[names[0]])
+    if len(names) == 0:
+        raise ValueError(
+            "No tokamak contributors are installed. "
+            "Install a device package (e.g. toksearch_d3d) to provide one."
+        )
+    raise ValueError(
+        f"No default tokamak selected and {len(names)} are registered "
+        f"({names}). Pass --default-device or set FDP_DEFAULT_DEVICE."
+    )
 
 
 def setup_environment(
-    device: "str | Device | None" = None,
+    device: str | None = None,
     bearer_token: str | None = None,
     **overrides,
 ) -> None:
     """Populate os.environ with FDP variables and resolve BEARER_TOKEN.
 
-    Resolves the active device/tokamak (catalog preferred, legacy Device
-    fallback), merges its env contribution with the generic FDP config,
-    and applies the result to ``os.environ``.
+    Resolves the active tokamak from the catalog, merges its env
+    contribution with the generic FDP config, and applies the result to
+    ``os.environ``.
 
     Args:
-        device: Optional device name (str) or Device instance to override
-            default-device resolution.
+        device: Optional tokamak name (str) to override default resolution.
+            If None, resolves via ``$FDP_DEFAULT_DEVICE`` or auto-detection.
         bearer_token: Optional explicit token. Falls back to
             ``$BEARER_TOKEN`` then ``~/.fdp/token``.
         **overrides: Force-set env vars (wins over both default config

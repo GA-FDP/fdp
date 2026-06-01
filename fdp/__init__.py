@@ -17,22 +17,14 @@
 Public surface:
 
 - ``catalog``: Tokamak catalog singleton (fdp_schema.catalogs entry points).
-- ``list_devices()`` / ``get_device(name)`` / ``current_device()``:
-  legacy device introspection (kept for backward compat; prefer catalog).
 - ``setup_environment(device=None, bearer_token=None)``: apply FDP env
-  vars to ``os.environ`` for the chosen device/tokamak. (Added in Task 3.)
-- ``FdpFileSystem``: XRootD wrapper used by ``fdp ls``. (Added in Task 4.)
+  vars to ``os.environ`` for the chosen tokamak.
+- ``FdpFileSystem``: XRootD wrapper used by ``fdp ls``.
 """
 
 import os as _os
 
 from .catalog import catalog
-from .devices import (
-    list_devices,
-    get_device,
-    current_device,
-    resolve_default_device,
-)
 from .environment import setup_environment, apply_environment
 from .filesystem import FdpFileSystem
 from . import _version
@@ -56,10 +48,6 @@ def main_logo_path() -> str | None:
 
 __all__ = [
     "catalog",
-    "list_devices",
-    "get_device",
-    "current_device",
-    "resolve_default_device",
     "setup_environment",
     "apply_environment",
     "FdpFileSystem",

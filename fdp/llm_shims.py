@@ -18,38 +18,33 @@ These are `os.execvpe` shims: fdp's main process is replaced by a fresh
 `python -m toksearch.llm.cli {chat,query}` process, with os.environ
 already containing the resolved FDP env vars. The fresh process picks
 up libfdpio/XRootD env at C-library load time.
-
-The active device's `default_llm_preset` (e.g. "amsc" for d3d) is
-inserted as the default `--backend` unless the user supplied one
-explicitly via `fdp chat --backend foo`.
 """
+
+from __future__ import annotations
 
 import os
 import sys
 
-from .devices import Device
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .catalog import TokamakHandle
 
 
 def _build_llm_cmd(
     subcommand: str,
     passthrough_args: list[str],
-    device: Device | None,
+    handle: TokamakHandle | None,
 ) -> list[str]:
     """Construct argv for the `toksearch.llm.cli` delegate.
 
-    ``device`` is ``None`` when no device contributor is installed
-    (typical in fdp's own dev env). In that case we simply skip the
+    ``handle`` is ``None`` when no tokamak contributor is installed
+    (typical in fdp's own dev env). In that case we skip any
     default-backend injection; the underlying toksearch CLI uses its
     own built-in default (``anthropic``) unless the user passed an
     explicit ``--backend``.
     """
     cmd = [sys.executable, "-m", "toksearch.llm.cli", subcommand]
-    if (
-        device is not None
-        and device.default_llm_preset
-        and "--backend" not in passthrough_args
-    ):
-        cmd.extend(["--backend", device.default_llm_preset])
     cmd.extend(passthrough_args)
     return cmd
 
@@ -72,15 +67,15 @@ def _common_passthrough(args) -> list[str]:
     return out
 
 
-def do_query(args, device: Device | None) -> None:
+def do_query(args, handle: TokamakHandle | None) -> None:
     passthrough = [args.query] + _common_passthrough(args)
-    cmd = _build_llm_cmd("query", passthrough, device)
+    cmd = _build_llm_cmd("query", passthrough, handle)
     os.execvpe(cmd[0], cmd, os.environ)
 
 
-def do_chat(args, device: Device | None) -> None:
+def do_chat(args, handle: TokamakHandle | None) -> None:
     passthrough = _common_passthrough(args)
-    cmd = _build_llm_cmd("chat", passthrough, device)
+    cmd = _build_llm_cmd("chat", passthrough, handle)
     env = os.environ
     if getattr(args, "gui", False):
         # Hand the GUI the FDP brand logo so it can stylize its
@@ -98,7 +93,7 @@ def do_backends(args) -> None:
     """Exec into ``toksearch.llm.cli backends`` for a clean device-free path.
 
     Listing is purely metadata, so we don't inject a default --backend
-    or otherwise touch the device.
+    or otherwise touch the tokamak.
     """
     cmd = [sys.executable, "-m", "toksearch.llm.cli", "backends"]
     os.execvpe(cmd[0], cmd, os.environ)

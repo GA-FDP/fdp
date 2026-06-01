@@ -20,60 +20,64 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from fdp.devices import Device
+
+# Minimal YAML for a fake handle.
+_FAKE_YAML = """\
+schema_version: 1
+name: d3d
+description: test
+locators: []
+"""
+
+
+def _make_handle():
+    from fdp.catalog import _Catalog, TokamakHandle
+    src = mock.MagicMock()
+    src.read_text.return_value = _FAKE_YAML
+    ep = mock.MagicMock()
+    ep.name = "d3d"
+    ep.load.return_value = src
+    with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+        cat = _Catalog()
+        return cat["d3d"]
 
 
 class TestBuildLlmCmd(unittest.TestCase):
-    def test_query_with_default_backend(self):
+    def test_basic_cmd_structure(self):
         from fdp.llm_shims import _build_llm_cmd
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
-        cmd = _build_llm_cmd("query", ["hello"], device)
+        handle = _make_handle()
+        cmd = _build_llm_cmd("query", ["hello"], handle)
         self.assertEqual(cmd[:4],
                          [sys.executable, "-m", "toksearch.llm.cli",
                           "query"])
-        self.assertEqual(cmd[cmd.index("--backend") + 1], "amsc")
         self.assertIn("hello", cmd)
 
-    def test_explicit_backend_wins(self):
-        from fdp.llm_shims import _build_llm_cmd
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
-        cmd = _build_llm_cmd("query",
-                              ["--backend", "anthropic", "hi"],
-                              device)
-        # Only one --backend, and it's the explicit one
-        self.assertEqual(cmd.count("--backend"), 1)
-        self.assertEqual(cmd[cmd.index("--backend") + 1], "anthropic")
-
-    def test_no_device_preset_no_default_backend(self):
-        from fdp.llm_shims import _build_llm_cmd
-        device = Device(name="x", pelican_root="r", origin_server="o",
-                         default_llm_preset=None)
-        cmd = _build_llm_cmd("chat", [], device)
-        self.assertNotIn("--backend", cmd)
-
-    def test_no_device_argument_at_all_works(self):
-        """device=None occurs when fdp runs without a device contributor
-        installed (e.g., inside fdp's own pixi dev env)."""
+    def test_none_handle_works(self):
+        """handle=None occurs when fdp runs without a tokamak contributor."""
         from fdp.llm_shims import _build_llm_cmd
         cmd = _build_llm_cmd("chat", ["--gui"], None)
         self.assertEqual(cmd[:4],
                          [sys.executable, "-m", "toksearch.llm.cli",
                           "chat"])
         self.assertIn("--gui", cmd)
-        self.assertNotIn("--backend", cmd)
+
+    def test_explicit_backend_forwarded(self):
+        from fdp.llm_shims import _build_llm_cmd
+        handle = _make_handle()
+        cmd = _build_llm_cmd("query",
+                              ["--backend", "anthropic", "hi"],
+                              handle)
+        self.assertEqual(cmd[cmd.index("--backend") + 1], "anthropic")
 
 
 class TestDoChat(unittest.TestCase):
     def test_execvpe_called(self):
         from fdp.llm_shims import do_chat
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
+        handle = _make_handle()
         args = SimpleNamespace(backend=None, model=None,
                                 max_iterations=None)
         with mock.patch("fdp.llm_shims.os.execvpe") as ev:
-            do_chat(args, device)
+            do_chat(args, handle)
         ev.assert_called_once()
         _, argv, env = ev.call_args.args
         self.assertEqual(argv[:4],
@@ -83,11 +87,10 @@ class TestDoChat(unittest.TestCase):
 
     def test_max_iterations_forwarded(self):
         from fdp.llm_shims import do_chat
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
+        handle = _make_handle()
         args = SimpleNamespace(backend=None, model=None, max_iterations=5)
         with mock.patch("fdp.llm_shims.os.execvpe") as ev:
-            do_chat(args, device)
+            do_chat(args, handle)
         argv = ev.call_args.args[1]
         self.assertEqual(argv[argv.index("-n") + 1], "5")
 
@@ -95,13 +98,12 @@ class TestDoChat(unittest.TestCase):
 class TestDoQuery(unittest.TestCase):
     def test_query_passed_through(self):
         from fdp.llm_shims import do_query
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
+        handle = _make_handle()
         args = SimpleNamespace(query="my prompt",
                                 backend=None, model=None,
                                 max_iterations=None)
         with mock.patch("fdp.llm_shims.os.execvpe") as ev:
-            do_query(args, device)
+            do_query(args, handle)
         argv = ev.call_args.args[1]
         self.assertIn("my prompt", argv)
         self.assertEqual(argv[3], "query")
@@ -110,8 +112,7 @@ class TestDoQuery(unittest.TestCase):
 class TestLogoEnvInjection(unittest.TestCase):
     def test_gui_sets_fdp_gui_logo_path_when_logo_available(self):
         from fdp import llm_shims as shims
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
+        handle = _make_handle()
         args = SimpleNamespace(backend=None, model=None,
                                 max_iterations=None,
                                 gui=True, open_browser=True)
@@ -123,7 +124,7 @@ class TestLogoEnvInjection(unittest.TestCase):
                                   if k != "FDP_GUI_LOGO_PATH"},
                                  clear=True), \
                 mock.patch("fdp.llm_shims.os.execvpe") as ev:
-            shims.do_chat(args, device)
+            shims.do_chat(args, handle)
         _, _, env = ev.call_args.args
         self.assertEqual(env.get("FDP_GUI_LOGO_PATH"),
                          "/path/to/logo.png")
@@ -132,13 +133,12 @@ class TestLogoEnvInjection(unittest.TestCase):
         # Without --gui, env passes through as os.environ identity.
         from fdp import llm_shims as shims
         import os as _os
-        device = Device(name="d3d", pelican_root="r", origin_server="o",
-                         default_llm_preset="amsc")
+        handle = _make_handle()
         args = SimpleNamespace(backend=None, model=None,
                                 max_iterations=None,
                                 gui=False, open_browser=True)
         with mock.patch("fdp.llm_shims.os.execvpe") as ev:
-            shims.do_chat(args, device)
+            shims.do_chat(args, handle)
         _, _, env = ev.call_args.args
         self.assertIs(env, _os.environ)
 
