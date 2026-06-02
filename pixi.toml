@@ -32,7 +32,7 @@ versioneer = "*"
 toksearch = ">=2.7.3"
 # Phase 1 catalog migration: fdp.catalog loads tokamak YAMLs validated
 # by fdp-schema. Available on the ga-fdp channel.
-fdp-schema = ">=0.1.1"
+fdp-schema = ">=0.1.2"
 
 [tasks]
 build = "pip install -e . --no-deps"
