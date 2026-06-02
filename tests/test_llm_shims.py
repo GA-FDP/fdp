@@ -173,5 +173,48 @@ class TestGuiPassthrough(unittest.TestCase):
         self.assertNotIn("--no-browser", out)
 
 
+class TestBuildLlmCmdAutoInjection(unittest.TestCase):
+    """Auto-injects --backend from the active tokamak's
+    default_llm_preset, unless the user passed --backend explicitly."""
+
+    def _handle(self, preset):
+        from unittest import mock
+        h = mock.MagicMock()
+        h.schema.default_llm_preset = preset
+        return h
+
+    def test_injects_when_handle_has_preset_and_user_did_not(self):
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle("amsc"))
+        self.assertIn("--backend", cmd)
+        self.assertEqual(cmd[cmd.index("--backend") + 1], "amsc")
+
+    def test_skips_when_user_passed_backend_explicitly(self):
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd(
+            "chat",
+            ["--backend", "openai", "--prompt", "hi"],
+            self._handle("amsc"),
+        )
+        # Exactly one --backend in cmd, and it's the user's value.
+        self.assertEqual(cmd.count("--backend"), 1)
+        self.assertEqual(cmd[cmd.index("--backend") + 1], "openai")
+
+    def test_skips_when_handle_is_none(self):
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], None)
+        self.assertNotIn("--backend", cmd)
+
+    def test_skips_when_preset_is_none(self):
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle(None))
+        self.assertNotIn("--backend", cmd)
+
+    def test_skips_when_preset_is_empty_string(self):
+        from fdp.llm_shims import _build_llm_cmd
+        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle(""))
+        self.assertNotIn("--backend", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

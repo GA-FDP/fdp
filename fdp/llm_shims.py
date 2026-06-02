@@ -38,13 +38,18 @@ def _build_llm_cmd(
 ) -> list[str]:
     """Construct argv for the `toksearch.llm.cli` delegate.
 
-    ``handle`` is ``None`` when no tokamak contributor is installed
-    (typical in fdp's own dev env). In that case we skip any
-    default-backend injection; the underlying toksearch CLI uses its
-    own built-in default (``anthropic``) unless the user passed an
-    explicit ``--backend``.
+    If the active tokamak has `default_llm_preset` set in its catalog
+    entry and the user did NOT pass `--backend` explicitly, inject
+    `--backend <preset>` so D3D users get the expected default
+    (e.g. `amsc`) without typing it every time.
     """
     cmd = [sys.executable, "-m", "toksearch.llm.cli", subcommand]
+    if (
+        handle is not None
+        and handle.schema.default_llm_preset
+        and "--backend" not in passthrough_args
+    ):
+        cmd.extend(["--backend", handle.schema.default_llm_preset])
     cmd.extend(passthrough_args)
     return cmd
 
