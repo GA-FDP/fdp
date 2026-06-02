@@ -180,7 +180,7 @@ def do_backends(args) -> None:
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--backend", default=None,
-        help="Backend / preset name (defaults to active device's "
+        help="Backend / preset name (defaults to the active tokamak's "
              "default_llm_preset).")
     p.add_argument(
         "--model", default=None,
