@@ -215,6 +215,42 @@ def _resolve_device_handle(device):
     )
 
 
+def build_device_config(handle) -> dict:
+    """Assemble the full env-var dict for a resolved device handle:
+    generic (locator-gated) config merged with the tokamak's catalog env.
+    Shared by setup_environment() and the `fdp env` CLI so the printed env
+    and the in-process env never drift."""
+    config = _generic_config(handle)
+    config.update(_tokamak_env(handle))
+    return config
+
+
+def resolve_bearer_token(handle, bearer_token=None) -> "str | None":
+    """Resolve the bearer token for a device, or None when the device
+    declares no bearer_token auth. Resolution order: explicit arg, then
+    $BEARER_TOKEN, then ~/.fdp/token. Warns if a bearer device has no
+    token available.
+
+    Returns ``None`` only when the device has no bearer auth at all.
+    For a bearer device with no token found, returns ``""`` (which
+    setup_environment still assigns, preserving legacy behavior).
+    """
+    if not _has_bearer_auth(handle):
+        return None
+    if not bearer_token:
+        bearer_token = os.environ.get("BEARER_TOKEN", "")
+    if not bearer_token:
+        token_file = Path.home() / ".fdp" / "token"
+        try:
+            bearer_token = token_file.read_text().strip()
+        except (OSError, UnicodeDecodeError):
+            warnings.warn(
+                "No BEARER_TOKEN specified. "
+                "This will cause problems with FDP access."
+            )
+    return bearer_token
+
+
 def setup_environment(
     device: str | None = None,
     bearer_token: str | None = None,
@@ -227,24 +263,11 @@ def setup_environment(
     locators require. Mutates os.environ in place. Safe to call repeatedly.
     """
     handle = _resolve_device_handle(device)
-    config = _generic_config(handle)
-    config.update(_tokamak_env(handle))
-    apply_environment(config, os.environ)
+    apply_environment(build_device_config(handle), os.environ)
 
     for key, value in overrides.items():
         os.environ[key] = str(value)
 
-    # Bearer token only when a locator declares bearer_token auth.
-    if _has_bearer_auth(handle):
-        if not bearer_token:
-            bearer_token = os.environ.get("BEARER_TOKEN", "")
-        if not bearer_token:
-            token_file = Path.home() / ".fdp" / "token"
-            try:
-                bearer_token = token_file.read_text().strip()
-            except (OSError, UnicodeDecodeError):
-                warnings.warn(
-                    "No BEARER_TOKEN specified. "
-                    "This will cause problems with FDP access."
-                )
-        os.environ["BEARER_TOKEN"] = bearer_token
+    token = resolve_bearer_token(handle, bearer_token)
+    if token is not None:
+        os.environ["BEARER_TOKEN"] = token

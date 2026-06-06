@@ -181,6 +181,41 @@ locators:
 """
 
 
+class TestGenericConfigParity(unittest.TestCase):
+    """Pin the exact set of generic env keys emitted for a full d3d-like
+    device (mds_tree + ptdata_indexed + sql, all over pelican transport).
+    Guards against a generic var being accidentally dropped or added."""
+
+    _EXPECTED_GENERIC_KEYS = {
+        "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "OMP_NUM_THREADS", "PATH",
+        "XRDCP_ALLOW_HTTP", "XRD_PELICANUSEAUTHHEADERS",
+        "XRD_CURLDISABLEPREFETCH", "XRD_PLUGINCONFDIR", "X509_CERT_FILE",
+        "MDS_PATH", "PTDATA_LOC", "PTDATA_LIBRARY", "PTDATA_PLUGIN_LIB",
+        "TDSVER",
+    }
+
+    def setUp(self):
+        ep = _make_catalog_ep("d3d", _D3D_TEST_YAML)
+        self._cat_patch = mock.patch("fdp.catalog.entry_points",
+                                     return_value=[ep])
+        self._cat_patch.start()
+        from fdp.catalog import catalog as _cat
+        _cat._cache = None
+
+    def tearDown(self):
+        self._cat_patch.stop()
+        from fdp.catalog import catalog as _cat
+        _cat._cache = None
+
+    def test_generic_keys_exact(self):
+        from fdp.catalog import catalog
+        handle = catalog["d3d"]
+        self.assertEqual(
+            set(_generic_config(handle).keys()),
+            self._EXPECTED_GENERIC_KEYS,
+        )
+
+
 class TestMastCleanEnv(unittest.TestCase):
     """A public, no-XRootD/no-token device gets a clean env."""
 
