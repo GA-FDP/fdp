@@ -277,3 +277,48 @@ class TestSqlResolver(unittest.TestCase):
         r = SqlResolver(self._model(driver="postgres"))
         with self.assertRaises(NotImplementedError):
             r.connect()
+
+
+class TestZarrStoreResolver:
+    def test_shot_url(self):
+        from fdp_schema.models import ZarrStoreLocator
+        from fdp.resolvers import ZarrStoreResolver
+        loc = ZarrStoreLocator(
+            name="main", protocol="s3",
+            base_url="s3://mast/level2/shots",
+            endpoint="https://s3.echo.stfc.ac.uk",
+        )
+        r = ZarrStoreResolver(loc)
+        assert r.shot_url(30421) == "s3://mast/level2/shots/30421.zarr"
+
+    def test_shot_url_custom_format(self):
+        from fdp_schema.models import ZarrStoreLocator
+        from fdp.resolvers import ZarrStoreResolver
+        loc = ZarrStoreLocator(
+            name="main", protocol="s3", base_url="s3://b/p",
+            file_name_format="MAST-{shot}.zarr",
+        )
+        assert ZarrStoreResolver(loc).shot_url(5) == "s3://b/p/MAST-5.zarr"
+
+
+class TestHttpCatalogResolver:
+    def test_shots_url(self):
+        from fdp_schema.models import HttpCatalogLocator
+        from fdp.resolvers import HttpCatalogResolver
+        loc = HttpCatalogLocator(
+            name="m", base_url="https://mastapp.site",
+            shots_path="parquet/level2/shots",
+            signals_path="parquet/level2/signals",
+        )
+        r = HttpCatalogResolver(loc)
+        assert r.shots_url() == "https://mastapp.site/parquet/level2/shots"
+        assert r.signals_url() == "https://mastapp.site/parquet/level2/signals"
+
+    def test_signals_url_missing_raises(self):
+        from fdp_schema.models import HttpCatalogLocator
+        from fdp.resolvers import HttpCatalogResolver
+        loc = HttpCatalogLocator(name="m", base_url="https://h",
+                                 shots_path="p")
+        import pytest
+        with pytest.raises(ValueError):
+            HttpCatalogResolver(loc).signals_url()
