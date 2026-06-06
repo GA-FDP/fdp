@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .catalog import catalog
 from .environment import (
-    _generic_config, _tokamak_env, _resolve_device_handle, _has_bearer_auth,
+    build_device_config, resolve_bearer_token, _resolve_device_handle,
     setup_environment,
 )
 from .filesystem import FdpFileSystem
@@ -38,16 +38,14 @@ from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 
 def do_env(args) -> None:
     handle = _resolve_device_handle(args.default_device)
-    config = _generic_config(handle)
-    config.update(_tokamak_env(handle))
+    config = build_device_config(handle)
     for key, value in config.items():
         if value is None:
             continue
         print(f"export {key}={shlex.quote(str(value))}")
-    if _has_bearer_auth(handle):
-        bearer_token = os.environ.get("BEARER_TOKEN", "")
-        if bearer_token:
-            print(f"export BEARER_TOKEN={shlex.quote(bearer_token)}")
+    token = resolve_bearer_token(handle)
+    if token:
+        print(f"export BEARER_TOKEN={shlex.quote(token)}")
 
 
 def do_run(args) -> None:
