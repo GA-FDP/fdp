@@ -182,6 +182,12 @@ def apply_environment(config: dict, env: dict) -> None:
     PATH is overwritten unconditionally because config["PATH"] is built
     by prepending env's bin/ to the existing PATH at config-build time;
     we must always write it through to honor that prepending.
+
+    Note: ``setdefault`` semantics mean this never *clears* a key already in
+    ``env``. FDP assumes one device per process (one device package per pixi
+    env); switching devices within a single process would leave the prior
+    device's vars (e.g. ``MAST_*`` vs ``XRD_*``) stale. That is not a
+    supported workflow.
     """
     if "PATH" in config:
         env["PATH"] = config["PATH"]
