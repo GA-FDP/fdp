@@ -37,10 +37,18 @@ locators:
     name: main
     transport: pelican
     search_path: [pelican://test/fdp-d3d/mds/~t]
+    auth: { kind: bearer_token, env: BEARER_TOKEN }
   - kind: ptdata_indexed
     name: main
     transport: pelican
     index_dir: pelican://test/fdp-d3d/idx
+    auth: { kind: bearer_token, env: BEARER_TOKEN }
+  - kind: sql
+    name: d3drdb
+    driver: mssql
+    host: d3drdb.gat.com
+    database: d3drdb
+    tdsver: "7.0"
 """
 
 
@@ -151,6 +159,93 @@ class TestSetupEnvironment(unittest.TestCase):
             self._cat_patch.start()
             from fdp.catalog import catalog as _cat
             _cat._cache = None
+
+
+_MAST_TEST_YAML = """\
+schema_version: 1
+name: mast
+description: test mast
+locators:
+  - kind: zarr_store
+    name: main
+    protocol: s3
+    base_url: s3://mast/level2/shots
+    endpoint: https://s3.echo.stfc.ac.uk
+    auth: { kind: none }
+  - kind: http_catalog
+    name: metadata
+    base_url: https://mastapp.site
+    shots_path: parquet/level2/shots
+    signals_path: parquet/level2/signals
+    auth: { kind: none }
+"""
+
+
+class TestMastCleanEnv(unittest.TestCase):
+    """A public, no-XRootD/no-token device gets a clean env."""
+
+    _XROOTD_PTDATA_KEYS = (
+        "XRDCP_ALLOW_HTTP", "XRD_PELICANUSEAUTHHEADERS",
+        "XRD_CURLDISABLEPREFETCH", "XRD_PLUGINCONFDIR", "X509_CERT_FILE",
+        "PTDATA_LOC", "PTDATA_LIBRARY", "PTDATA_PLUGIN_LIB",
+        "MDS_PATH", "TDSVER", "default_tree_path", "PTDATA_JSON_INDEX_DIR",
+    )
+
+    def setUp(self):
+        self._saved = {}
+        for k in self._XROOTD_PTDATA_KEYS + (
+            "BEARER_TOKEN", "FDP_DEFAULT_DEVICE",
+            "MKL_NUM_THREADS", "OMP_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+            "MAST_ZARR_BASE_URL", "MAST_ZARR_PROTOCOL", "MAST_ZARR_ENDPOINT",
+            "MAST_ZARR_FILE_NAME_FORMAT", "MAST_CATALOG_URL",
+            "MAST_CATALOG_SHOTS_PATH", "MAST_CATALOG_SIGNALS_PATH",
+        ):
+            self._saved[k] = os.environ.pop(k, None)
+        ep = _make_catalog_ep("mast", _MAST_TEST_YAML)
+        self._cat_patch = mock.patch("fdp.catalog.entry_points",
+                                     return_value=[ep])
+        self._cat_patch.start()
+        from fdp.catalog import catalog as _cat
+        _cat._cache = None
+
+    def tearDown(self):
+        self._cat_patch.stop()
+        from fdp.catalog import catalog as _cat
+        _cat._cache = None
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+
+    def test_no_xrootd_ptdata_mds_sql_vars(self):
+        setup_environment()
+        for k in self._XROOTD_PTDATA_KEYS:
+            self.assertNotIn(k, os.environ, f"{k} should not be set for mast")
+
+    def test_universal_vars_present(self):
+        setup_environment()
+        self.assertEqual(os.environ.get("MKL_NUM_THREADS"), "1")
+        self.assertIn("PATH", os.environ)
+
+    def test_mast_vars_emitted(self):
+        setup_environment()
+        self.assertEqual(os.environ["MAST_ZARR_BASE_URL"],
+                         "s3://mast/level2/shots")
+        self.assertEqual(os.environ["MAST_ZARR_PROTOCOL"], "s3")
+        self.assertEqual(os.environ["MAST_ZARR_ENDPOINT"],
+                         "https://s3.echo.stfc.ac.uk")
+        self.assertEqual(os.environ["MAST_CATALOG_URL"],
+                         "https://mastapp.site")
+        self.assertEqual(os.environ["MAST_CATALOG_SHOTS_PATH"],
+                         "parquet/level2/shots")
+
+    def test_no_bearer_token_and_no_warning(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any warning -> test failure
+            setup_environment()
+        self.assertNotIn("BEARER_TOKEN", os.environ)
 
 
 if __name__ == "__main__":
