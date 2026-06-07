@@ -183,8 +183,8 @@ def do_backends(args) -> None:
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--backend", default=None,
-        help="Backend / preset name (defaults to the active tokamak's "
-             "default_llm_preset).")
+        help="Backend / preset name. Defaults to $FDP_LLM_BACKEND, then "
+             "~/.fdp/config.toml [llm].backend, then the built-in default.")
     p.add_argument(
         "--model", default=None,
         help="Override the preset's default model.")

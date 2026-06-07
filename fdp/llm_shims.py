@@ -34,22 +34,17 @@ if TYPE_CHECKING:
 def _build_llm_cmd(
     subcommand: str,
     passthrough_args: list[str],
-    handle: TokamakHandle | None,
+    handle: TokamakHandle | None = None,
 ) -> list[str]:
     """Construct argv for the `toksearch.llm.cli` delegate.
 
-    If the active tokamak has `default_llm_preset` set in its catalog
-    entry and the user did NOT pass `--backend` explicitly, inject
-    `--backend <preset>` so D3D users get the expected default
-    (e.g. `amsc`) without typing it every time.
+    The LLM backend/preset is a *deployment-level* choice, not a per-device
+    one: toksearch.llm resolves it from ``--backend`` > ``$FDP_LLM_BACKEND``
+    > ``~/.fdp/config.toml`` ``[llm].backend`` > the built-in default. The
+    catalog `handle` is therefore not consulted here (the parameter is kept
+    for call-site compatibility).
     """
     cmd = [sys.executable, "-m", "toksearch.llm.cli", subcommand]
-    if (
-        handle is not None
-        and handle.schema.default_llm_preset
-        and "--backend" not in passthrough_args
-    ):
-        cmd.extend(["--backend", handle.schema.default_llm_preset])
     cmd.extend(passthrough_args)
     return cmd
 
