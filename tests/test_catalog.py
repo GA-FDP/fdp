@@ -188,6 +188,23 @@ class TestCatalogCli(unittest.TestCase):
         self.assertIn("d3drdb", output)
 
 
+class TestWrapNewLocators:
+    def test_wrap_zarr_store(self):
+        from fdp_schema.models import ZarrStoreLocator
+        from fdp.catalog import _wrap
+        from fdp.resolvers import ZarrStoreResolver
+        loc = ZarrStoreLocator(name="m", protocol="s3", base_url="s3://b/p")
+        assert isinstance(_wrap(loc), ZarrStoreResolver)
+
+    def test_wrap_http_catalog(self):
+        from fdp_schema.models import HttpCatalogLocator
+        from fdp.catalog import _wrap
+        from fdp.resolvers import HttpCatalogResolver
+        loc = HttpCatalogLocator(name="m", base_url="https://h",
+                                 shots_path="p")
+        assert isinstance(_wrap(loc), HttpCatalogResolver)
+
+
 @unittest.skipIf(_SKIP_INTEGRATION, _SKIP_REASON)
 class TestCatalogIntegration(unittest.TestCase):
     """End-to-end with the real toksearch_d3d entry point installed."""

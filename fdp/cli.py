@@ -21,7 +21,10 @@ import sys
 from pathlib import Path
 
 from .catalog import catalog
-from .environment import _generic_config, _resolve_device_env, setup_environment
+from .environment import (
+    build_device_config, resolve_bearer_token, _resolve_device_handle,
+    setup_environment,
+)
 from .filesystem import FdpFileSystem
 from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
@@ -34,15 +37,15 @@ from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 # ----------------------------------------------------------------------
 
 def do_env(args) -> None:
-    config = _generic_config()
-    config.update(_resolve_device_env(args.default_device))
+    handle = _resolve_device_handle(args.default_device)
+    config = build_device_config(handle)
     for key, value in config.items():
         if value is None:
             continue
         print(f"export {key}={shlex.quote(str(value))}")
-    bearer_token = os.environ.get("BEARER_TOKEN", "")
-    if bearer_token:
-        print(f"export BEARER_TOKEN={shlex.quote(bearer_token)}")
+    token = resolve_bearer_token(handle)
+    if token:
+        print(f"export BEARER_TOKEN={shlex.quote(token)}")
 
 
 def do_run(args) -> None:
@@ -180,8 +183,8 @@ def do_backends(args) -> None:
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--backend", default=None,
-        help="Backend / preset name (defaults to the active tokamak's "
-             "default_llm_preset).")
+        help="Backend / preset name. Defaults to $FDP_LLM_BACKEND, then "
+             "~/.fdp/config.toml [llm].backend, then the built-in default.")
     p.add_argument(
         "--model", default=None,
         help="Override the preset's default model.")

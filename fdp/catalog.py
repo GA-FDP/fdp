@@ -54,8 +54,14 @@ class _Catalog:
         return TokamakHandle(loaded[name])
 
 
-from fdp_schema import MdsTreeLocator, PtDataIndexedLocator, SqlLocator
-from fdp.resolvers import MdsTreeResolver, PtDataResolver, SqlResolver
+from fdp_schema import (
+    MdsTreeLocator, PtDataIndexedLocator, SqlLocator,
+    ZarrStoreLocator, HttpCatalogLocator,
+)
+from fdp.resolvers import (
+    MdsTreeResolver, PtDataResolver, SqlResolver,
+    ZarrStoreResolver, HttpCatalogResolver,
+)
 
 
 def _wrap(loc):
@@ -64,6 +70,8 @@ def _wrap(loc):
         MdsTreeLocator:        MdsTreeResolver,
         PtDataIndexedLocator:  PtDataResolver,
         SqlLocator:            SqlResolver,
+        ZarrStoreLocator:      ZarrStoreResolver,
+        HttpCatalogLocator:    HttpCatalogResolver,
     }[type(loc)](loc)
 
 

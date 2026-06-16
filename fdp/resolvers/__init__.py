@@ -6,5 +6,13 @@
 from .mds_tree import MdsTreeResolver
 from .ptdata import PtDataResolver
 from .sql import SqlResolver
+from .zarr_store import ZarrStoreResolver
+from .http_catalog import HttpCatalogResolver
 
-__all__ = ["MdsTreeResolver", "PtDataResolver", "SqlResolver"]
+__all__ = [
+    "MdsTreeResolver",
+    "PtDataResolver",
+    "SqlResolver",
+    "ZarrStoreResolver",
+    "HttpCatalogResolver",
+]

@@ -49,6 +49,29 @@ extra_env: {D3DATA: /d3d/data}
 """
 
 
+# Minimal catalog YAML for a fake mast test tokamak: a public, no-XRootD,
+# no-token device (zarr_store + http_catalog, auth kind none). Mirrors
+# tests/test_environment.py::_MAST_TEST_YAML.
+_MAST_TEST_YAML = """\
+schema_version: 1
+name: mast
+description: MAST tokamak (test)
+locators:
+  - kind: zarr_store
+    name: main
+    protocol: s3
+    base_url: s3://mast/level2/shots
+    endpoint: https://s3.echo.stfc.ac.uk
+    auth: { kind: none }
+  - kind: http_catalog
+    name: metadata
+    base_url: https://mastapp.site
+    shots_path: parquet/level2/shots
+    signals_path: parquet/level2/signals
+    auth: { kind: none }
+"""
+
+
 def _make_catalog_ep(name: str, yaml_text: str):
     src = mock.MagicMock()
     src.read_text.return_value = yaml_text
@@ -58,23 +81,24 @@ def _make_catalog_ep(name: str, yaml_text: str):
     return ep
 
 
-def _patch_catalog(stack, yaml_text: str = _D3D_TEST_YAML):
+def _patch_catalog(stack, yaml_text: str = _D3D_TEST_YAML,
+                   name: str = "d3d"):
     """Patch the catalog entry points and reset the cache."""
     from fdp.catalog import catalog as _cat
-    ep = _make_catalog_ep("d3d", yaml_text)
+    ep = _make_catalog_ep(name, yaml_text)
     stack.enter_context(mock.patch("fdp.catalog.entry_points",
                                     return_value=[ep]))
     _cat._cache = None
     stack.callback(lambda: setattr(_cat, "_cache", None))
 
 
-def _run_cli(argv, yaml_text: str = _D3D_TEST_YAML):
+def _run_cli(argv, yaml_text: str = _D3D_TEST_YAML, name: str = "d3d"):
     """Invoke fdp.cli.main with mocks; return (stdout, exit_code)."""
     from fdp import cli
     buf = io.StringIO()
     exit_code = None
     with ExitStack() as stack:
-        _patch_catalog(stack, yaml_text)
+        _patch_catalog(stack, yaml_text, name)
         stack.enter_context(mock.patch.object(sys, "argv", argv))
         stack.enter_context(mock.patch.object(cli, "setup_environment"))
         stack.enter_context(redirect_stdout(buf))
@@ -92,6 +116,45 @@ class TestCliEnv(unittest.TestCase):
         self.assertTrue(
             any(line.startswith("export ") for line in out.splitlines()),
             f"no export lines in output: {out!r}",
+        )
+
+    def test_env_mast_clean_device_has_no_gated_exports(self):
+        """A public, no-XRootD/no-token device prints only the universal +
+        MAST_* exports — no XRootD/PTData/MDS/TDSVER/BEARER_TOKEN lines."""
+        out, _ = _run_cli(["fdp", "env"], _MAST_TEST_YAML, name="mast")
+        lines = out.splitlines()
+        forbidden = ("export XRD", "export PTDATA", "export TDSVER",
+                     "export BEARER_TOKEN", "export MDS_PATH",
+                     "export default_tree_path")
+        for line in lines:
+            for prefix in forbidden:
+                self.assertFalse(
+                    line.startswith(prefix),
+                    f"unexpected gated export in clean device env: {line!r}",
+                )
+        self.assertTrue(
+            any(line.startswith("export MKL_NUM_THREADS=") for line in lines),
+            f"missing universal MKL export: {out!r}",
+        )
+        self.assertTrue(
+            any(line.startswith("export MAST_ZARR_BASE_URL=")
+                for line in lines),
+            f"missing MAST_ZARR_BASE_URL export: {out!r}",
+        )
+
+    def test_env_d3d_device_emits_gated_exports(self):
+        """The d3d-like device DOES print TDSVER + XRootD exports, pinning
+        the CLI path's locator-gating in both directions."""
+        out, _ = _run_cli(["fdp", "env"])
+        lines = out.splitlines()
+        self.assertTrue(
+            any(line.startswith("export TDSVER=") for line in lines),
+            f"missing TDSVER export for d3d: {out!r}",
+        )
+        self.assertTrue(
+            any(line.startswith("export XRDCP_ALLOW_HTTP=")
+                for line in lines),
+            f"missing XRootD export for d3d: {out!r}",
         )
 
 
