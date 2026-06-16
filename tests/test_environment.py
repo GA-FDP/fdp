@@ -283,5 +283,46 @@ class TestMastCleanEnv(unittest.TestCase):
         self.assertNotIn("BEARER_TOKEN", os.environ)
 
 
+_PTDATA_PATTERN_YAML = """\
+schema_version: 1
+name: t
+description: test ptdata pattern
+locators:
+  - kind: ptdata_indexed
+    name: main
+    transport: pelican
+    index_dir: pelican://h/ns/idx
+    index_pattern: "json_indexes_*"
+    auth: { kind: bearer_token, env: BEARER_TOKEN }
+"""
+
+
+class TestPtDataIndexPatternEnv(unittest.TestCase):
+    """_tokamak_env emits PTDATA_JSON_INDEX_PATTERN iff the locator has one."""
+
+    def _env_for(self, yaml_text):
+        from fdp.environment import _tokamak_env
+        from fdp.catalog import catalog as _cat
+        ep = _make_catalog_ep("t", yaml_text)
+        with mock.patch("fdp.catalog.entry_points", return_value=[ep]):
+            _cat._cache = None
+            try:
+                return _tokamak_env(_cat["t"])
+            finally:
+                _cat._cache = None
+
+    def test_emits_pattern_when_set(self):
+        env = self._env_for(_PTDATA_PATTERN_YAML)
+        self.assertEqual(env["PTDATA_JSON_INDEX_DIR"], "pelican://h/ns/idx")
+        self.assertEqual(env["PTDATA_JSON_INDEX_PATTERN"], "json_indexes_*")
+
+    def test_omits_pattern_when_unset(self):
+        yaml_no_pattern = _PTDATA_PATTERN_YAML.replace(
+            '    index_pattern: "json_indexes_*"\n', "")
+        env = self._env_for(yaml_no_pattern)
+        self.assertTrue(env["PTDATA_JSON_INDEX_DIR"].endswith("idx"))
+        self.assertNotIn("PTDATA_JSON_INDEX_PATTERN", env)
+
+
 if __name__ == "__main__":
     unittest.main()
