@@ -191,6 +191,42 @@ class TestPtDataResolver(unittest.TestCase):
             ):
                 self.assertEqual(r.resolve(200000, "ip"), "pelican://h/data/200000.PWR")
 
+    def _model_pattern(self):
+        from fdp_schema import PtDataIndexedLocator, AuthHint
+        return PtDataIndexedLocator(
+            name="main", transport="pelican",
+            index_dir="pelican://h/idx",
+            index_pattern="json_indexes_*",
+            auth=AuthHint(kind="bearer_token", env="BEARER_TOKEN"),
+        )
+
+    def test_index_url_uses_pattern_resolved_dir(self):
+        import sys, types
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+
+        # Stub ptdata._core.resolve_index_dir so no network/list happens.
+        fake_core = types.SimpleNamespace(
+            resolve_index_dir=mock.Mock(
+                return_value="pelican://h/idx/json_indexes_2026-02-20"))
+        fake_ptdata = types.ModuleType("ptdata")
+        fake_ptdata._core = fake_core
+        with mock.patch.dict(sys.modules,
+                             {"ptdata": fake_ptdata, "ptdata._core": fake_core}):
+            r = PtDataResolver(self._model_pattern())
+            url = r._index_url(165920)
+
+        self.assertEqual(url, "pelican://h/idx/json_indexes_2026-02-20/1659/165920.json")
+        fake_core.resolve_index_dir.assert_called_once_with(
+            "pelican://h/idx", "json_indexes_*")
+
+    def test_index_url_no_pattern_unchanged(self):
+        # Backward compatible: no pattern -> index_dir used verbatim,
+        # resolve_index_dir is not called.
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())   # _model() has no index_pattern
+        self.assertEqual(r._index_url(50), "pelican://h/idx/0/50.json")
+
 
 class TestSqlResolver(unittest.TestCase):
     def _model(self, **overrides):
