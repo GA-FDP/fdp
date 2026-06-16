@@ -147,9 +147,14 @@ def _tokamak_env(handle) -> dict[str, str]:
         )
 
     # PTDATA_JSON_INDEX_DIR — last ptdata_indexed wins if multiple.
+    # When that locator carries an index_pattern, index_dir is the PARENT
+    # and PTDATA_JSON_INDEX_PATTERN tells the libfdpio plugin to select the
+    # latest matching subdir at read time.
     ptd = [l for l in handle.schema.locators if l.kind == "ptdata_indexed"]
     if ptd:
         out["PTDATA_JSON_INDEX_DIR"] = ptd[-1].index_dir
+        if ptd[-1].index_pattern:
+            out["PTDATA_JSON_INDEX_PATTERN"] = ptd[-1].index_pattern
 
     # Zarr-store locators → env consumed by zarr-based signal packages
     # (e.g. toksearch_mast). v1 emits the first zarr_store locator.

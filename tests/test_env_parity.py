@@ -26,9 +26,9 @@ EXPECTED_D3D_ENV = {
         "pelican://osg-htc.org:443/fdp-d3d/archives/mdsplus/shots/~t/~f~e/~d~c"
     ),
     "PTDATA_JSON_INDEX_DIR": (
-        "pelican://osg-htc.org:443/fdp-d3d/archives/index/json/"
-        "json_indexes_2026-01-13_12:22:11"
+        "pelican://osg-htc.org:443/fdp-d3d/archives/index/json"
     ),
+    "PTDATA_JSON_INDEX_PATTERN": "json_indexes_*",
     "D3DATA": "yes",
     "SYS_D3_DELIM": ";",
     "CAKE_DB_PATH": (
