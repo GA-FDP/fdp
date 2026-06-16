@@ -36,6 +36,7 @@ class PtDataResolver:
     def __init__(self, model):
         self.model = model
         self._index_cache: dict[int, dict] = {}
+        self._resolved_index_dir: "str | None" = None
 
     def resolve(self, shot: int, pointname: str) -> "str | None":
         """Return the shotfile URL for `(shot, pointname)`, or None if no
@@ -49,8 +50,24 @@ class PtDataResolver:
             return None
         return idx.get("ext_location", {}).get(ext)
 
+    def _concrete_index_dir(self) -> str:
+        """Resolve index_dir once. With an index_pattern, index_dir is a
+        parent and the latest matching subdir is selected (delegated to
+        ptdata._core.resolve_index_dir, the same logic the C plugin uses).
+        Without a pattern, index_dir is returned verbatim."""
+        if self._resolved_index_dir is None:
+            pattern = getattr(self.model, "index_pattern", None)
+            if pattern:
+                # Lazy import: keeps fdp.resolvers importable without ptdata.
+                from ptdata import _core
+                self._resolved_index_dir = _core.resolve_index_dir(
+                    self.model.index_dir, pattern)
+            else:
+                self._resolved_index_dir = self.model.index_dir
+        return self._resolved_index_dir
+
     def _index_url(self, shot: int) -> str:
-        return f"{self.model.index_dir}/{shot // 100}/{shot}.json"
+        return f"{self._concrete_index_dir()}/{shot // 100}/{shot}.json"
 
     def _fetch_index(self, shot: int) -> dict:
         # Lazy import so fdp.resolvers imports without requiring ptdata
