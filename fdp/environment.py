@@ -56,35 +56,77 @@ def _get_default_xrd_pluginconfdir() -> str | None:
         return val
 
 
-def _generic_config() -> dict:
-    """FDP env vars that apply regardless of device."""
+def _locator_kinds(handle) -> set:
+    if handle is None:
+        return set()
+    return {l.kind for l in handle.schema.locators}
+
+
+def _has_xrootd_transport(handle) -> bool:
+    if handle is None:
+        return False
+    return any(
+        getattr(l, "transport", None) in ("pelican", "xrootd")
+        for l in handle.schema.locators
+    )
+
+
+def _has_bearer_auth(handle) -> bool:
+    if handle is None:
+        return False
+    return any(
+        getattr(l, "auth", None) is not None
+        and l.auth.kind == "bearer_token"
+        for l in handle.schema.locators
+    )
+
+
+def _generic_config(handle=None) -> dict:
+    """FDP env vars. Universal vars are always emitted; transport/auth
+    vars only when the device declares a locator that needs them. With
+    handle=None only the universal vars are returned."""
     env_dir = Path(sys.executable).parent.parent
     lib_dir = env_dir / "lib"
     bin_dir = env_dir / "bin"
-    return {
-        # XRootD / Pelican
-        "XRDCP_ALLOW_HTTP": "true",
-        "XRD_PELICANUSEAUTHHEADERS": "true",
-        "XRD_CURLDISABLEPREFETCH": "1",
-        "XRD_PLUGINCONFDIR": _get_default_xrd_pluginconfdir() or "",
+
+    config = {
         # Thread-affinity vars (keep NumPy / MKL single-threaded)
         "MKL_NUM_THREADS": "1",
         "NUMEXPR_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
-        # pymssql TLS requirement
-        "TDSVER": "7.0",
-        # SSL trust store
-        "X509_CERT_FILE": str(env_dir / "ssl" / "cacert.pem"),
         # Prepend env's bin/ to PATH
         "PATH": f"{bin_dir}:{os.getenv('PATH', '')}",
-        # MDSplus TDI search path
-        "MDS_PATH": str(env_dir / "tdi"),
-        # PTData library hookup (the libs themselves are device-agnostic;
-        # the *index* directory is device-specific and comes from the Device)
-        "PTDATA_LOC": os.getenv("PTDATA_LOC", "1"),
-        "PTDATA_LIBRARY": str(lib_dir / "libd3.so"),
-        "PTDATA_PLUGIN_LIB": str(lib_dir / "libjson_index_plugin.so"),
     }
+
+    kinds = _locator_kinds(handle)
+
+    # XRootD / Pelican transport — only for pelican/xrootd locators.
+    if _has_xrootd_transport(handle):
+        config.update({
+            "XRDCP_ALLOW_HTTP": "true",
+            "XRD_PELICANUSEAUTHHEADERS": "true",
+            "XRD_CURLDISABLEPREFETCH": "1",
+            "XRD_PLUGINCONFDIR": _get_default_xrd_pluginconfdir() or "",
+            "X509_CERT_FILE": str(env_dir / "ssl" / "cacert.pem"),
+        })
+
+    # MDSplus TDI search path — only with an mds_tree locator.
+    if "mds_tree" in kinds:
+        config["MDS_PATH"] = str(env_dir / "tdi")
+
+    # PTData library hookup — only with a ptdata_indexed locator.
+    if "ptdata_indexed" in kinds:
+        config.update({
+            "PTDATA_LOC": os.getenv("PTDATA_LOC", "1"),
+            "PTDATA_LIBRARY": str(lib_dir / "libd3.so"),
+            "PTDATA_PLUGIN_LIB": str(lib_dir / "libjson_index_plugin.so"),
+        })
+
+    # pymssql TLS requirement — only with a sql locator.
+    if "sql" in kinds:
+        config["TDSVER"] = "7.0"
+
+    return config
 
 
 def _tokamak_env(handle) -> dict[str, str]:
@@ -105,9 +147,34 @@ def _tokamak_env(handle) -> dict[str, str]:
         )
 
     # PTDATA_JSON_INDEX_DIR — last ptdata_indexed wins if multiple.
+    # When that locator carries an index_pattern, index_dir is the PARENT
+    # and PTDATA_JSON_INDEX_PATTERN tells the libfdpio plugin to select the
+    # latest matching subdir at read time.
     ptd = [l for l in handle.schema.locators if l.kind == "ptdata_indexed"]
     if ptd:
         out["PTDATA_JSON_INDEX_DIR"] = ptd[-1].index_dir
+        if ptd[-1].index_pattern:
+            out["PTDATA_JSON_INDEX_PATTERN"] = ptd[-1].index_pattern
+
+    # Zarr-store locators → env consumed by zarr-based signal packages
+    # (e.g. toksearch_mast). v1 emits the first zarr_store locator.
+    zarr = [l for l in handle.schema.locators if l.kind == "zarr_store"]
+    if zarr:
+        z = zarr[0]
+        out["MAST_ZARR_BASE_URL"] = z.base_url
+        out["MAST_ZARR_PROTOCOL"] = z.protocol
+        out["MAST_ZARR_FILE_NAME_FORMAT"] = z.file_name_format
+        if z.endpoint:
+            out["MAST_ZARR_ENDPOINT"] = z.endpoint
+
+    # HTTP metadata catalog → env for parquet/REST shot-list helpers.
+    cat = [l for l in handle.schema.locators if l.kind == "http_catalog"]
+    if cat:
+        c = cat[0]
+        out["MAST_CATALOG_URL"] = c.base_url
+        out["MAST_CATALOG_SHOTS_PATH"] = c.shots_path
+        if c.signals_path:
+            out["MAST_CATALOG_SIGNALS_PATH"] = c.signals_path
 
     # extra_env passes through verbatim.
     out.update(handle.extra_env)
@@ -120,6 +187,12 @@ def apply_environment(config: dict, env: dict) -> None:
     PATH is overwritten unconditionally because config["PATH"] is built
     by prepending env's bin/ to the existing PATH at config-build time;
     we must always write it through to honor that prepending.
+
+    Note: ``setdefault`` semantics mean this never *clears* a key already in
+    ``env``. FDP assumes one device per process (one device package per pixi
+    env); switching devices within a single process would leave the prior
+    device's vars (e.g. ``MAST_*`` vs ``XRD_*``) stale. That is not a
+    supported workflow.
     """
     if "PATH" in config:
         env["PATH"] = config["PATH"]
@@ -129,25 +202,19 @@ def apply_environment(config: dict, env: dict) -> None:
         env.setdefault(k, str(v))
 
 
-def _resolve_device_env(device: str | None) -> dict:
-    """Return tokamak-specific env vars from the catalog.
+def _resolve_device_handle(device):
+    """Return the TokamakHandle for the active device.
 
-    Resolution order (first match wins):
-      1. ``device`` argument if supplied.
-      2. ``$FDP_DEFAULT_DEVICE`` environment variable.
-      3. Auto-select if exactly one tokamak is registered.
-
-    Raises ``KeyError`` if the named tokamak isn't in the catalog and
-    ``ValueError`` if no default can be determined (0 or 2+ registered).
+    Resolution order: explicit ``device`` arg, then ``$FDP_DEFAULT_DEVICE``,
+    then auto-select if exactly one tokamak is registered.
     """
     if device is None:
         device = os.environ.get("FDP_DEFAULT_DEVICE") or None
     if device is not None:
-        return _tokamak_env(_catalog[device])
-    # Auto-detect: if exactly one tokamak is registered, use it.
+        return _catalog[device]
     names = _catalog.names()
     if len(names) == 1:
-        return _tokamak_env(_catalog[names[0]])
+        return _catalog[names[0]]
     if len(names) == 0:
         raise ValueError(
             "No tokamak contributors are installed. "
@@ -159,34 +226,28 @@ def _resolve_device_env(device: str | None) -> dict:
     )
 
 
-def setup_environment(
-    device: str | None = None,
-    bearer_token: str | None = None,
-    **overrides,
-) -> None:
-    """Populate os.environ with FDP variables and resolve BEARER_TOKEN.
+def build_device_config(handle) -> dict:
+    """Assemble the full env-var dict for a resolved device handle:
+    generic (locator-gated) config merged with the tokamak's catalog env.
+    Shared by setup_environment() and the `fdp env` CLI so the printed env
+    and the in-process env never drift."""
+    config = _generic_config(handle)
+    config.update(_tokamak_env(handle))
+    return config
 
-    Resolves the active tokamak from the catalog, merges its env
-    contribution with the generic FDP config, and applies the result to
-    ``os.environ``.
 
-    Args:
-        device: Optional tokamak name (str) to override default resolution.
-            If None, resolves via ``$FDP_DEFAULT_DEVICE`` or auto-detection.
-        bearer_token: Optional explicit token. Falls back to
-            ``$BEARER_TOKEN`` then ``~/.fdp/token``.
-        **overrides: Force-set env vars (wins over both default config
-            and existing os.environ).
+def resolve_bearer_token(handle, bearer_token=None) -> "str | None":
+    """Resolve the bearer token for a device, or None when the device
+    declares no bearer_token auth. Resolution order: explicit arg, then
+    $BEARER_TOKEN, then ~/.fdp/token. Warns if a bearer device has no
+    token available.
 
-    Mutates os.environ in place. Safe to call multiple times.
+    Returns ``None`` only when the device has no bearer auth at all.
+    For a bearer device with no token found, returns ``""`` (which
+    setup_environment still assigns, preserving legacy behavior).
     """
-    config = _generic_config()
-    config.update(_resolve_device_env(device))
-    apply_environment(config, os.environ)
-
-    for key, value in overrides.items():
-        os.environ[key] = str(value)
-
+    if not _has_bearer_auth(handle):
+        return None
     if not bearer_token:
         bearer_token = os.environ.get("BEARER_TOKEN", "")
     if not bearer_token:
@@ -198,4 +259,26 @@ def setup_environment(
                 "No BEARER_TOKEN specified. "
                 "This will cause problems with FDP access."
             )
-    os.environ["BEARER_TOKEN"] = bearer_token
+    return bearer_token
+
+
+def setup_environment(
+    device: str | None = None,
+    bearer_token: str | None = None,
+    **overrides,
+) -> None:
+    """Populate os.environ with FDP variables for the active tokamak.
+
+    Env emission is locator-driven: a device only receives the transport,
+    PTData, MDSplus, SQL and bearer-token variables that its declared
+    locators require. Mutates os.environ in place. Safe to call repeatedly.
+    """
+    handle = _resolve_device_handle(device)
+    apply_environment(build_device_config(handle), os.environ)
+
+    for key, value in overrides.items():
+        os.environ[key] = str(value)
+
+    token = resolve_bearer_token(handle, bearer_token)
+    if token is not None:
+        os.environ["BEARER_TOKEN"] = token

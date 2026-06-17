@@ -191,6 +191,42 @@ class TestPtDataResolver(unittest.TestCase):
             ):
                 self.assertEqual(r.resolve(200000, "ip"), "pelican://h/data/200000.PWR")
 
+    def _model_pattern(self):
+        from fdp_schema import PtDataIndexedLocator, AuthHint
+        return PtDataIndexedLocator(
+            name="main", transport="pelican",
+            index_dir="pelican://h/idx",
+            index_pattern="json_indexes_*",
+            auth=AuthHint(kind="bearer_token", env="BEARER_TOKEN"),
+        )
+
+    def test_index_url_uses_pattern_resolved_dir(self):
+        import sys, types
+        from unittest import mock
+        from fdp.resolvers.ptdata import PtDataResolver
+
+        # Stub ptdata._core.resolve_index_dir so no network/list happens.
+        fake_core = types.SimpleNamespace(
+            resolve_index_dir=mock.Mock(
+                return_value="pelican://h/idx/json_indexes_2026-02-20"))
+        fake_ptdata = types.ModuleType("ptdata")
+        fake_ptdata._core = fake_core
+        with mock.patch.dict(sys.modules,
+                             {"ptdata": fake_ptdata, "ptdata._core": fake_core}):
+            r = PtDataResolver(self._model_pattern())
+            url = r._index_url(165920)
+
+        self.assertEqual(url, "pelican://h/idx/json_indexes_2026-02-20/1659/165920.json")
+        fake_core.resolve_index_dir.assert_called_once_with(
+            "pelican://h/idx", "json_indexes_*")
+
+    def test_index_url_no_pattern_unchanged(self):
+        # Backward compatible: no pattern -> index_dir used verbatim,
+        # resolve_index_dir is not called.
+        from fdp.resolvers.ptdata import PtDataResolver
+        r = PtDataResolver(self._model())   # _model() has no index_pattern
+        self.assertEqual(r._index_url(50), "pelican://h/idx/0/50.json")
+
 
 class TestSqlResolver(unittest.TestCase):
     def _model(self, **overrides):
@@ -277,3 +313,48 @@ class TestSqlResolver(unittest.TestCase):
         r = SqlResolver(self._model(driver="postgres"))
         with self.assertRaises(NotImplementedError):
             r.connect()
+
+
+class TestZarrStoreResolver:
+    def test_shot_url(self):
+        from fdp_schema.models import ZarrStoreLocator
+        from fdp.resolvers import ZarrStoreResolver
+        loc = ZarrStoreLocator(
+            name="main", protocol="s3",
+            base_url="s3://mast/level2/shots",
+            endpoint="https://s3.echo.stfc.ac.uk",
+        )
+        r = ZarrStoreResolver(loc)
+        assert r.shot_url(30421) == "s3://mast/level2/shots/30421.zarr"
+
+    def test_shot_url_custom_format(self):
+        from fdp_schema.models import ZarrStoreLocator
+        from fdp.resolvers import ZarrStoreResolver
+        loc = ZarrStoreLocator(
+            name="main", protocol="s3", base_url="s3://b/p",
+            file_name_format="MAST-{shot}.zarr",
+        )
+        assert ZarrStoreResolver(loc).shot_url(5) == "s3://b/p/MAST-5.zarr"
+
+
+class TestHttpCatalogResolver:
+    def test_shots_url(self):
+        from fdp_schema.models import HttpCatalogLocator
+        from fdp.resolvers import HttpCatalogResolver
+        loc = HttpCatalogLocator(
+            name="m", base_url="https://mastapp.site",
+            shots_path="parquet/level2/shots",
+            signals_path="parquet/level2/signals",
+        )
+        r = HttpCatalogResolver(loc)
+        assert r.shots_url() == "https://mastapp.site/parquet/level2/shots"
+        assert r.signals_url() == "https://mastapp.site/parquet/level2/signals"
+
+    def test_signals_url_missing_raises(self):
+        from fdp_schema.models import HttpCatalogLocator
+        from fdp.resolvers import HttpCatalogResolver
+        loc = HttpCatalogLocator(name="m", base_url="https://h",
+                                 shots_path="p")
+        import pytest
+        with pytest.raises(ValueError):
+            HttpCatalogResolver(loc).signals_url()

@@ -173,9 +173,11 @@ class TestGuiPassthrough(unittest.TestCase):
         self.assertNotIn("--no-browser", out)
 
 
-class TestBuildLlmCmdAutoInjection(unittest.TestCase):
-    """Auto-injects --backend from the active tokamak's
-    default_llm_preset, unless the user passed --backend explicitly."""
+class TestBuildLlmCmdNoDeviceInjection(unittest.TestCase):
+    """The LLM backend/preset is a deployment-level choice (resolved by
+    toksearch.llm from --backend / $FDP_LLM_BACKEND / config.toml / built-in),
+    not per-device. _build_llm_cmd must never inject --backend from the
+    catalog handle."""
 
     def _handle(self, preset):
         from unittest import mock
@@ -183,36 +185,25 @@ class TestBuildLlmCmdAutoInjection(unittest.TestCase):
         h.schema.default_llm_preset = preset
         return h
 
-    def test_injects_when_handle_has_preset_and_user_did_not(self):
+    def test_no_backend_injected_even_when_handle_has_preset(self):
         from fdp.llm_shims import _build_llm_cmd
         cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle("amsc"))
-        self.assertIn("--backend", cmd)
-        self.assertEqual(cmd[cmd.index("--backend") + 1], "amsc")
+        self.assertNotIn("--backend", cmd)
 
-    def test_skips_when_user_passed_backend_explicitly(self):
+    def test_user_backend_passthrough_preserved(self):
         from fdp.llm_shims import _build_llm_cmd
         cmd = _build_llm_cmd(
             "chat",
             ["--backend", "openai", "--prompt", "hi"],
             self._handle("amsc"),
         )
-        # Exactly one --backend in cmd, and it's the user's value.
         self.assertEqual(cmd.count("--backend"), 1)
         self.assertEqual(cmd[cmd.index("--backend") + 1], "openai")
 
-    def test_skips_when_handle_is_none(self):
+    def test_builds_delegate_cmd_without_handle(self):
         from fdp.llm_shims import _build_llm_cmd
-        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], None)
-        self.assertNotIn("--backend", cmd)
-
-    def test_skips_when_preset_is_none(self):
-        from fdp.llm_shims import _build_llm_cmd
-        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle(None))
-        self.assertNotIn("--backend", cmd)
-
-    def test_skips_when_preset_is_empty_string(self):
-        from fdp.llm_shims import _build_llm_cmd
-        cmd = _build_llm_cmd("chat", ["--prompt", "hi"], self._handle(""))
+        cmd = _build_llm_cmd("query", ["my question"])
+        self.assertEqual(cmd[1:4], ["-m", "toksearch.llm.cli", "query"])
         self.assertNotIn("--backend", cmd)
 
 
