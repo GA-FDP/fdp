@@ -9,6 +9,7 @@ import os
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -209,7 +210,6 @@ class TestExtractToken(unittest.TestCase):
 
 class TestEnsureToken(unittest.TestCase):
     def setUp(self):
-        import os
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.home = Path(self._td.name)
@@ -234,17 +234,21 @@ class TestEnsureToken(unittest.TestCase):
         login_mock.assert_not_called()
 
     def test_opt_out_env_blocks_login(self):
-        import os
         os.environ["FDP_NO_AUTO_LOGIN"] = "1"
         with mock.patch.object(auth, "login") as login_mock:
-            self.assertIsNone(
-                auth.ensure_token(_bearer_handle(), interactive=True))
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                self.assertIsNone(
+                    auth.ensure_token(_bearer_handle(), interactive=True))
         login_mock.assert_not_called()
+        self.assertEqual(
+            [w for w in caught if issubclass(w.category, UserWarning)], [])
 
     def test_non_interactive_blocks_login(self):
         with mock.patch.object(auth, "login") as login_mock:
-            self.assertIsNone(
-                auth.ensure_token(_bearer_handle(), interactive=False))
+            with self.assertWarns(UserWarning):
+                self.assertIsNone(
+                    auth.ensure_token(_bearer_handle(), interactive=False))
         login_mock.assert_not_called()
 
     def test_interactive_acquires_and_reresolves(self):
