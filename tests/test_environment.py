@@ -14,11 +14,22 @@
 
 """Tests for fdp.environment.setup_environment."""
 
+import base64 as _b64
+import json as _json
 import os
 import tempfile
+import time as _time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+
+def _unexpired_jwt():
+    h = _b64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+    p = _b64.urlsafe_b64encode(
+        _json.dumps({"exp": int(_time.time()) + 3600}).encode()
+    ).rstrip(b"=").decode()
+    return f"{h}.{p}.sig"
 
 from fdp.environment import (
     apply_environment,
@@ -129,13 +140,15 @@ class TestSetupEnvironment(unittest.TestCase):
         self.assertEqual(os.environ["BEARER_TOKEN"], "explicit-token")
 
     def test_bearer_token_from_file(self):
+        token = _unexpired_jwt()
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
             (home / ".fdp").mkdir()
-            (home / ".fdp" / "token").write_text("file-token\n")
+            (home / ".fdp" / "token").write_text(token + "\n")
             with mock.patch.object(Path, "home", return_value=home):
+                os.environ.pop("BEARER_TOKEN", None)
                 setup_environment()
-            self.assertEqual(os.environ["BEARER_TOKEN"], "file-token")
+            self.assertEqual(os.environ["BEARER_TOKEN"], token)
 
     def test_device_by_name(self):
         setup_environment(device="d3d", bearer_token="dummy")
