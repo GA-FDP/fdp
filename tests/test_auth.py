@@ -43,3 +43,7 @@ class TestDecodeExp(unittest.TestCase):
     def test_not_a_jwt_returns_none(self):
         self.assertIsNone(auth.decode_exp("file-token"))
         self.assertIsNone(auth.decode_exp(""))
+
+    def test_non_string_returns_none(self):
+        self.assertIsNone(auth.decode_exp(12345))
+        self.assertIsNone(auth.decode_exp(None))

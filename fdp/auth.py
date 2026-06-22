@@ -34,5 +34,5 @@ def decode_exp(token: str) -> "int | None":
         payload = json.loads(base64.urlsafe_b64decode(padded))
         exp = payload.get("exp")
         return int(exp) if exp is not None else None
-    except (IndexError, ValueError, TypeError, json.JSONDecodeError):
+    except (IndexError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
         return None
