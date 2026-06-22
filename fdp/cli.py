@@ -52,9 +52,12 @@ def do_env(args) -> None:
 
 
 def do_login(args) -> None:
-    handle = _resolve_device_handle(args.default_device)
     try:
+        handle = _resolve_device_handle(args.default_device)
         result = auth.login(handle, write=args.write)
+    except (ValueError, KeyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     except auth.AuthError as exc:
         print(f"Login failed: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -71,7 +74,11 @@ def do_login(args) -> None:
 
 
 def do_logout(args) -> None:
-    handle = _resolve_device_handle(args.default_device)
+    try:
+        handle = _resolve_device_handle(args.default_device)
+    except (ValueError, KeyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     removed = auth.logout(handle)
     print("Removed cached token."
           if removed else "No cached token to remove.")
