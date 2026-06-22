@@ -26,7 +26,9 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -201,3 +203,32 @@ def logout(handle) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def _auto_login_allowed(interactive) -> bool:
+    if os.environ.get("FDP_NO_AUTO_LOGIN"):
+        return False
+    if interactive is None:
+        interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    return bool(interactive)
+
+
+def ensure_token(handle, explicit=None, *, interactive=None) -> "str | None":
+    """get_valid_token(); if nothing usable and auto-login is allowed +
+    possible, run login() and re-resolve. Warns and returns None when it
+    cannot acquire. interactive=None auto-detects via TTY; callers may
+    force True/False (e.g. `fdp env` passes False)."""
+    tok = get_valid_token(handle, explicit)
+    if tok is not None:
+        return tok
+    if _bearer_env(handle) is None:
+        return None
+    if not _auto_login_allowed(interactive):
+        warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")
+        return None
+    try:
+        login(handle)
+    except AuthError as exc:
+        warnings.warn(f"Automatic login failed: {exc}. Run `fdp login`.")
+        return None
+    return get_valid_token(handle, explicit)
