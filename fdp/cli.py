@@ -18,8 +18,10 @@ import os
 import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
+from . import auth
 from .catalog import catalog
 from .environment import (
     build_device_config, resolve_bearer_token, _resolve_device_handle,
@@ -45,7 +47,34 @@ def do_env(args) -> None:
         print(f"export {key}={shlex.quote(str(value))}")
     token = resolve_bearer_token(handle)
     if token:
-        print(f"export BEARER_TOKEN={shlex.quote(token)}")
+        env_var = auth.bearer_env(handle) or "BEARER_TOKEN"
+        print(f"export {env_var}={shlex.quote(token)}")
+
+
+def do_login(args) -> None:
+    handle = _resolve_device_handle(args.default_device)
+    try:
+        result = auth.login(handle, write=args.write)
+    except auth.AuthError as exc:
+        print(f"Login failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if result is None:
+        print(f"Device '{handle.schema.name}' needs no bearer token.")
+        return
+    if result.exp:
+        when = datetime.fromtimestamp(
+            result.exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        when = "unknown"
+    print(f"Logged in to {result.device} ({result.scope}); "
+          f"token valid until {when}.")
+
+
+def do_logout(args) -> None:
+    handle = _resolve_device_handle(args.default_device)
+    removed = auth.logout(handle)
+    print("Removed cached token."
+          if removed else "No cached token to remove.")
 
 
 def do_run(args) -> None:
@@ -212,11 +241,21 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Run a command with FDP env applied")
     p_run.add_argument("command_args", nargs=argparse.REMAINDER,
                         help="Command and args to pass through")
-    p_run.set_defaults(func=do_run)
+    p_run.set_defaults(func=do_run, auto_login=True)
 
     p_env = sub.add_parser("env",
                             help="Print env vars for shell eval")
     p_env.set_defaults(func=do_env)
+
+    p_login = sub.add_parser("login",
+                             help="Acquire/refresh a bearer token via pelican")
+    p_login.add_argument("--write", action="store_true",
+                         help="Request a write-scoped token (default: read).")
+    p_login.set_defaults(func=do_login, needs_env=False)
+
+    p_logout = sub.add_parser("logout",
+                              help="Delete the cached bearer token")
+    p_logout.set_defaults(func=do_logout, needs_env=False)
 
     p_ls = sub.add_parser("ls", help="List files on the FDP")
     p_ls.add_argument("--dirs-only", "-d", action="store_true",
@@ -288,6 +327,7 @@ def main(argv=None) -> None:
         setup_environment(
             device=args.default_device,
             bearer_token=args.bearer_token or None,
+            auto_login=getattr(args, "auto_login", False),
         )
 
     args.func(args)
