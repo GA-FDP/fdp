@@ -126,6 +126,22 @@ class TestGetValidToken(unittest.TestCase):
     def test_all_empty_returns_none(self):
         self.assertIsNone(auth.get_valid_token(_bearer_handle()))
 
+    def test_bearer_env_custom_name(self):
+        hint = SimpleNamespace(kind="bearer_token", env="FDP_TOKEN_X")
+        loc = SimpleNamespace(auth=hint)
+        handle = SimpleNamespace(schema=SimpleNamespace(
+            name="x", pelican_root="p", locators=[loc]))
+        self.assertEqual(auth.bearer_env(handle), "FDP_TOKEN_X")
+
+    def test_custom_env_var_used(self):
+        os.environ["FDP_TOKEN_X"] = "ctok"
+        self.addCleanup(os.environ.pop, "FDP_TOKEN_X", None)
+        hint = SimpleNamespace(kind="bearer_token", env="FDP_TOKEN_X")
+        loc = SimpleNamespace(auth=hint)
+        handle = SimpleNamespace(schema=SimpleNamespace(
+            name="x", pelican_root="p", locators=[loc]))
+        self.assertEqual(auth.get_valid_token(handle), "ctok")
+
 
 class TestLoginLogout(unittest.TestCase):
     def setUp(self):

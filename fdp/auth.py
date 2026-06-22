@@ -176,7 +176,13 @@ def _write_cache(handle, token: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
     tmp = path.with_suffix(".token.tmp")
-    tmp.write_text(token)
+    # Create with 0o600 from the start so the token is never briefly
+    # world-readable under a permissive umask. O_TRUNC overwrites any
+    # stale tmp from a crashed run; the explicit chmod fixes the mode of
+    # such a pre-existing file (O_CREAT won't change an existing file's mode).
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
