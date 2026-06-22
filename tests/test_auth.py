@@ -118,3 +118,88 @@ class TestGetValidToken(unittest.TestCase):
 
     def test_all_empty_returns_none(self):
         self.assertIsNone(auth.get_valid_token(_bearer_handle()))
+
+
+import subprocess
+
+
+class TestLoginLogout(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.home = Path(self._td.name)
+        (self.home / ".fdp").mkdir()
+        p = mock.patch.object(Path, "home", return_value=self.home)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_login_writes_cache_0600(self):
+        token = _make_jwt(3600)
+        fake = SimpleNamespace(returncode=0, stdout=json.dumps(
+            {"access_token": token}), stderr="")
+        with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
+             mock.patch.object(auth.subprocess, "run", return_value=fake):
+            result = auth.login(_bearer_handle())
+        self.assertEqual(result.device, "d3d")
+        self.assertEqual(result.scope, "read")
+        cache = self.home / ".fdp" / "cache" / "d3d.token"
+        self.assertEqual(cache.read_text(), token)
+        self.assertEqual(oct(cache.stat().st_mode & 0o777), "0o600")
+
+    def test_login_write_scope_passes_write_arg(self):
+        token = _make_jwt(3600)
+        fake = SimpleNamespace(returncode=0, stdout=token, stderr="")
+        with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
+             mock.patch.object(auth.subprocess, "run", return_value=fake) as run:
+            auth.login(_bearer_handle(), write=True)
+        argv = run.call_args[0][0]
+        self.assertIn("write", argv)
+        self.assertNotIn("read", argv)
+
+    def test_login_missing_pelican_raises_autherror(self):
+        with mock.patch.object(auth.shutil, "which", return_value=None):
+            with self.assertRaises(auth.AuthError):
+                auth.login(_bearer_handle())
+
+    def test_login_pelican_nonzero_raises_autherror(self):
+        fake = SimpleNamespace(returncode=1, stdout="", stderr="boom")
+        with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
+             mock.patch.object(auth.subprocess, "run", return_value=fake):
+            with self.assertRaises(auth.AuthError):
+                auth.login(_bearer_handle())
+
+    def test_login_no_pelican_root_raises(self):
+        h = _bearer_handle(pelican_root=None)
+        with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"):
+            with self.assertRaises(auth.AuthError):
+                auth.login(h)
+
+    def test_login_no_bearer_device_returns_none(self):
+        self.assertIsNone(auth.login(_no_bearer_handle()))
+
+    def test_logout_removes_cache(self):
+        cache_dir = self.home / ".fdp" / "cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "d3d.token").write_text("x")
+        self.assertTrue(auth.logout(_bearer_handle()))
+        self.assertFalse((cache_dir / "d3d.token").exists())
+
+    def test_logout_no_cache_returns_false(self):
+        self.assertFalse(auth.logout(_bearer_handle()))
+
+
+class TestExtractToken(unittest.TestCase):
+    def test_json_access_token(self):
+        self.assertEqual(
+            auth._extract_token(json.dumps({"access_token": "a.b.c"})), "a.b.c")
+
+    def test_json_token_key(self):
+        self.assertEqual(
+            auth._extract_token(json.dumps({"token": "a.b.c"})), "a.b.c")
+
+    def test_bare_jwt_line(self):
+        self.assertEqual(auth._extract_token("\na.b.c\n"), "a.b.c")
+
+    def test_empty_returns_none(self):
+        self.assertIsNone(auth._extract_token("   "))
