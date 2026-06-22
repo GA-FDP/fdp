@@ -167,6 +167,7 @@ def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
 def _write_cache(handle, token: str) -> None:
     path = _cache_path(handle)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
     tmp = path.with_suffix(".token.tmp")
     tmp.write_text(token)
     os.chmod(tmp, 0o600)
