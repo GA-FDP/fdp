@@ -25,6 +25,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from . import auth
 from .catalog import catalog as _catalog
 
 
@@ -237,41 +238,25 @@ def build_device_config(handle) -> dict:
 
 
 def resolve_bearer_token(handle, bearer_token=None) -> "str | None":
-    """Resolve the bearer token for a device, or None when the device
-    declares no bearer_token auth. Resolution order: explicit arg, then
-    $BEARER_TOKEN, then ~/.fdp/token. Warns if a bearer device has no
-    token available.
-
-    Returns ``None`` only when the device has no bearer auth at all.
-    For a bearer device with no token found, returns ``""`` (which
-    setup_environment still assigns, preserving legacy behavior).
-    """
-    if not _has_bearer_auth(handle):
-        return None
-    if not bearer_token:
-        bearer_token = os.environ.get("BEARER_TOKEN", "")
-    if not bearer_token:
-        token_file = Path.home() / ".fdp" / "token"
-        try:
-            bearer_token = token_file.read_text().strip()
-        except (OSError, UnicodeDecodeError):
-            warnings.warn(
-                "No BEARER_TOKEN specified. "
-                "This will cause problems with FDP access."
-            )
-    return bearer_token
+    """Resolve a usable bearer token for a device, or None when the device
+    declares no bearer auth or nothing usable is found. Delegates to
+    fdp.auth; never triggers an interactive flow."""
+    return auth.get_valid_token(handle, explicit=bearer_token)
 
 
 def setup_environment(
     device: str | None = None,
     bearer_token: str | None = None,
+    *,
+    auto_login: bool = False,
     **overrides,
 ) -> None:
     """Populate os.environ with FDP variables for the active tokamak.
 
-    Env emission is locator-driven: a device only receives the transport,
-    PTData, MDSplus, SQL and bearer-token variables that its declared
-    locators require. Mutates os.environ in place. Safe to call repeatedly.
+    Env emission is locator-driven. When auto_login is True (set by
+    `fdp run`), a missing/expired token triggers the interactive
+    `fdp login` flow subject to TTY / FDP_NO_AUTO_LOGIN gating. Mutates
+    os.environ in place. Safe to call repeatedly.
     """
     handle = _resolve_device_handle(device)
     apply_environment(build_device_config(handle), os.environ)
@@ -279,6 +264,13 @@ def setup_environment(
     for key, value in overrides.items():
         os.environ[key] = str(value)
 
-    token = resolve_bearer_token(handle, bearer_token)
+    if auto_login:
+        token = auth.ensure_token(handle, explicit=bearer_token)
+    else:
+        token = auth.get_valid_token(handle, explicit=bearer_token)
+
     if token is not None:
-        os.environ["BEARER_TOKEN"] = token
+        env_var = auth._bearer_env(handle) or "BEARER_TOKEN"
+        os.environ[env_var] = token
+    elif auth._bearer_env(handle) is not None and not auto_login:
+        warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")
