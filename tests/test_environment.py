@@ -198,6 +198,28 @@ class TestSetupEnvironment(unittest.TestCase):
                     [w for w in caught if issubclass(w.category, UserWarning)],
                     [])
 
+    def test_auto_login_sets_token_end_to_end(self):
+        token = _unexpired_jwt()
+        from fdp import auth
+
+        def fake_login(handle, write=False):
+            cache = Path.home() / ".fdp" / "cache"
+            cache.mkdir(parents=True, exist_ok=True)
+            (cache / f"{handle.schema.name}.token").write_text(token)
+            return auth.CachedToken(handle.schema.name, "read",
+                                    auth.decode_exp(token))
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".fdp").mkdir()
+            with mock.patch.object(Path, "home", return_value=home):
+                os.environ.pop("BEARER_TOKEN", None)
+                with mock.patch("fdp.auth.login", side_effect=fake_login), \
+                     mock.patch("fdp.auth._auto_login_allowed",
+                                return_value=True):
+                    setup_environment(auto_login=True)
+                self.assertEqual(os.environ["BEARER_TOKEN"], token)
+
 
 _MAST_TEST_YAML = """\
 schema_version: 1
