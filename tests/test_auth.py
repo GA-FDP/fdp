@@ -120,12 +120,8 @@ class TestGetValidToken(unittest.TestCase):
         self.assertIsNone(auth.get_valid_token(_bearer_handle()))
 
 
-import subprocess
-
-
 class TestLoginLogout(unittest.TestCase):
     def setUp(self):
-        import tempfile
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.home = Path(self._td.name)
@@ -156,6 +152,7 @@ class TestLoginLogout(unittest.TestCase):
         argv = run.call_args[0][0]
         self.assertIn("write", argv)
         self.assertNotIn("read", argv)
+        self.assertEqual(argv[4], "write")
 
     def test_login_missing_pelican_raises_autherror(self):
         with mock.patch.object(auth.shutil, "which", return_value=None):
@@ -203,3 +200,8 @@ class TestExtractToken(unittest.TestCase):
 
     def test_empty_returns_none(self):
         self.assertIsNone(auth._extract_token("   "))
+
+    def test_access_token_beats_token(self):
+        out = auth._extract_token(json.dumps(
+            {"access_token": "a.b.c", "token": "x.y.z"}))
+        self.assertEqual(out, "a.b.c")
