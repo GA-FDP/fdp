@@ -224,7 +224,8 @@ def ensure_token(handle, explicit=None, *, interactive=None) -> "str | None":
     if _bearer_env(handle) is None:
         return None
     if not _auto_login_allowed(interactive):
-        warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")
+        if not os.environ.get("FDP_NO_AUTO_LOGIN"):
+            warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")
         return None
     try:
         login(handle)
