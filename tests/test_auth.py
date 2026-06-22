@@ -5,8 +5,13 @@
 
 import base64
 import json
+import os
+import tempfile
 import time
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from fdp import auth
 
@@ -49,11 +54,6 @@ class TestDecodeExp(unittest.TestCase):
         self.assertIsNone(auth.decode_exp(None))
 
 
-from pathlib import Path
-from unittest import mock
-from types import SimpleNamespace
-
-
 def _bearer_handle(name="d3d", pelican_root="pelican://test/fdp-d3d"):
     """A fake TokamakHandle exposing .schema.name / .pelican_root /
     .locators[*].auth, which is all auth.py reads."""
@@ -72,8 +72,6 @@ def _no_bearer_handle(name="mast"):
 
 class TestGetValidToken(unittest.TestCase):
     def setUp(self):
-        import os
-        import tempfile
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.home = Path(self._td.name)
@@ -99,13 +97,14 @@ class TestGetValidToken(unittest.TestCase):
             auth.get_valid_token(_bearer_handle(), explicit="xtok"), "xtok")
 
     def test_env_var_used_verbatim(self):
-        import os
         os.environ["BEARER_TOKEN"] = "envtok"
+        self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
         self.assertEqual(auth.get_valid_token(_bearer_handle()), "envtok")
 
     def test_fresh_cache_used(self):
-        self._write_cache("d3d", _make_jwt(3600))
-        self.assertIsNotNone(auth.get_valid_token(_bearer_handle()))
+        token = _make_jwt(3600)
+        self._write_cache("d3d", token)
+        self.assertEqual(auth.get_valid_token(_bearer_handle()), token)
 
     def test_expired_cache_skipped_falls_to_legacy(self):
         self._write_cache("d3d", _make_jwt(-10))
