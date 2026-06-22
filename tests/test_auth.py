@@ -205,3 +205,63 @@ class TestExtractToken(unittest.TestCase):
         out = auth._extract_token(json.dumps(
             {"access_token": "a.b.c", "token": "x.y.z"}))
         self.assertEqual(out, "a.b.c")
+
+
+class TestEnsureToken(unittest.TestCase):
+    def setUp(self):
+        import os
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.home = Path(self._td.name)
+        (self.home / ".fdp").mkdir()
+        p = mock.patch.object(Path, "home", return_value=self.home)
+        p.start()
+        self.addCleanup(p.stop)
+        os.environ.pop("BEARER_TOKEN", None)
+        os.environ.pop("FDP_NO_AUTO_LOGIN", None)
+        self.addCleanup(os.environ.pop, "FDP_NO_AUTO_LOGIN", None)
+        self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
+
+    def test_returns_existing_valid_token_without_login(self):
+        with mock.patch.object(auth, "login") as login_mock:
+            out = auth.ensure_token(_bearer_handle(), explicit="tok")
+        self.assertEqual(out, "tok")
+        login_mock.assert_not_called()
+
+    def test_no_bearer_device_is_noop(self):
+        with mock.patch.object(auth, "login") as login_mock:
+            self.assertIsNone(auth.ensure_token(_no_bearer_handle()))
+        login_mock.assert_not_called()
+
+    def test_opt_out_env_blocks_login(self):
+        import os
+        os.environ["FDP_NO_AUTO_LOGIN"] = "1"
+        with mock.patch.object(auth, "login") as login_mock:
+            self.assertIsNone(
+                auth.ensure_token(_bearer_handle(), interactive=True))
+        login_mock.assert_not_called()
+
+    def test_non_interactive_blocks_login(self):
+        with mock.patch.object(auth, "login") as login_mock:
+            self.assertIsNone(
+                auth.ensure_token(_bearer_handle(), interactive=False))
+        login_mock.assert_not_called()
+
+    def test_interactive_acquires_and_reresolves(self):
+        token = _make_jwt(3600)
+
+        def fake_login(handle, write=False):
+            (self.home / ".fdp" / "cache").mkdir(parents=True, exist_ok=True)
+            (self.home / ".fdp" / "cache" / "d3d.token").write_text(token)
+            return auth.CachedToken("d3d", "read", auth.decode_exp(token))
+
+        with mock.patch.object(auth, "login", side_effect=fake_login):
+            out = auth.ensure_token(_bearer_handle(), interactive=True)
+        self.assertEqual(out, token)
+
+    def test_login_failure_degrades_to_none(self):
+        with mock.patch.object(auth, "login",
+                               side_effect=auth.AuthError("nope")):
+            with self.assertWarns(UserWarning):
+                out = auth.ensure_token(_bearer_handle(), interactive=True)
+        self.assertIsNone(out)
