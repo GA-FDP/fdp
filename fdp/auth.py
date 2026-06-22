@@ -55,6 +55,7 @@ def _bearer_env(handle) -> "str | None":
 
 
 def _is_unexpired(token: str, margin: int = CACHE_MARGIN_SEC) -> bool:
+    """True if the token decodes to a JWT whose exp is at least `margin` seconds in the future."""
     exp = decode_exp(token)
     return exp is not None and exp >= time.time() + margin
 
@@ -76,6 +77,8 @@ def get_valid_token(handle, explicit=None) -> "str | None":
 
     explicit and $BEARER_TOKEN are trusted verbatim; file sources are
     only used when they decode to an unexpired JWT.
+
+    An empty or None `explicit` is treated as 'no override'.
     """
     env_var = _bearer_env(handle)
     if env_var is None:
