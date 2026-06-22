@@ -333,34 +333,28 @@ class TestDefaultDeviceFlag(unittest.TestCase):
 class TestCliLoginLogout(unittest.TestCase):
     def test_login_dispatches_to_auth_login(self):
         from fdp import cli, auth
-        ep = _make_catalog_ep("d3d", _D3D_TEST_YAML)
         ct = auth.CachedToken(device="d3d", scope="read", exp=None)
         with ExitStack() as stack:
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "login"]))
-            stack.enter_context(mock.patch(
-                "fdp.catalog.entry_points", return_value=[ep]))
-            from fdp.catalog import catalog as _cat
-            _cat._cache = None
             login_mock = stack.enter_context(
                 mock.patch.object(cli.auth, "login", return_value=ct))
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cli.main()
             login_mock.assert_called_once()
+            self.assertEqual(
+                login_mock.call_args.args[0].schema.name, "d3d")
             self.assertEqual(login_mock.call_args.kwargs.get("write"), False)
 
     def test_login_write_flag(self):
         from fdp import cli, auth
-        ep = _make_catalog_ep("d3d", _D3D_TEST_YAML)
         ct = auth.CachedToken(device="d3d", scope="write", exp=None)
         with ExitStack() as stack:
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "login", "--write"]))
-            stack.enter_context(mock.patch(
-                "fdp.catalog.entry_points", return_value=[ep]))
-            from fdp.catalog import catalog as _cat
-            _cat._cache = None
             login_mock = stack.enter_context(
                 mock.patch.object(cli.auth, "login", return_value=ct))
             with redirect_stdout(io.StringIO()):
@@ -369,14 +363,10 @@ class TestCliLoginLogout(unittest.TestCase):
 
     def test_logout_dispatches(self):
         from fdp import cli
-        ep = _make_catalog_ep("d3d", _D3D_TEST_YAML)
         with ExitStack() as stack:
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "logout"]))
-            stack.enter_context(mock.patch(
-                "fdp.catalog.entry_points", return_value=[ep]))
-            from fdp.catalog import catalog as _cat
-            _cat._cache = None
             logout_mock = stack.enter_context(
                 mock.patch.object(cli.auth, "logout", return_value=True))
             with redirect_stdout(io.StringIO()):
@@ -385,14 +375,10 @@ class TestCliLoginLogout(unittest.TestCase):
 
     def test_run_sets_auto_login_true(self):
         from fdp import cli
-        ep = _make_catalog_ep("d3d", _D3D_TEST_YAML)
         with ExitStack() as stack:
+            _patch_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "run", "true"]))
-            stack.enter_context(mock.patch(
-                "fdp.catalog.entry_points", return_value=[ep]))
-            from fdp.catalog import catalog as _cat
-            _cat._cache = None
             setup_mock = stack.enter_context(
                 mock.patch.object(cli, "setup_environment"))
             stack.enter_context(mock.patch.object(
