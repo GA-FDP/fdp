@@ -24,7 +24,10 @@ and cached per-device as bare JWTs under ~/.fdp/cache/.
 import base64
 import json
 import os
+import shutil
+import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -95,3 +98,105 @@ def get_valid_token(handle, explicit=None) -> "str | None":
     if legacy and _is_unexpired(legacy):
         return legacy
     return None
+
+
+class AuthError(Exception):
+    """Token acquisition failed (pelican missing, flow aborted, etc.)."""
+
+
+@dataclass
+class CachedToken:
+    """In-memory result of login() for the CLI summary. NOT the on-disk
+    format -- the cache file holds the bare JWT."""
+    device: str
+    scope: str
+    exp: "int | None"
+
+
+def _extract_token(stdout: str) -> "str | None":
+    """Pull the raw JWT out of pelican's output. Handles a bare JWT printed
+    on its own line (the observed real behavior), and also a --json dict or
+    bare JSON string for robustness across pelican versions."""
+    text = stdout.strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            for key in ("access_token", "token"):
+                v = data.get(key)
+                if isinstance(v, str) and v:
+                    return v
+        elif isinstance(data, str) and data:
+            return data
+    except (ValueError, TypeError):
+        pass
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.count(".") == 2 and " " not in line:
+            return line
+    return None
+
+
+def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
+    """Run the pelican OAuth flow and return the raw JWT.
+
+    pelican requires a TTY: stdin and stderr are inherited so the user sees
+    the device-code/browser prompt and can answer any password prompt; only
+    stdout (which carries the bare token) is captured.
+    """
+    pelican = shutil.which("pelican")
+    if pelican is None:
+        raise AuthError("pelican client not found in environment")
+    scope = "write" if write else "read"
+    cmd = [pelican, "credentials", "token", "get", scope, pelican_root,
+           "--json"]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    except OSError as exc:
+        raise AuthError(f"failed to invoke pelican: {exc}")
+    if proc.returncode != 0:
+        raise AuthError(
+            f"pelican token request failed (exit {proc.returncode})")
+    token = _extract_token(proc.stdout)
+    if not token:
+        raise AuthError("could not parse a token from pelican output")
+    return token
+
+
+def _write_cache(handle, token: str) -> None:
+    path = _cache_path(handle)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_suffix(".token.tmp")
+    tmp.write_text(token)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def login(handle, *, write: bool = False) -> "CachedToken | None":
+    """Mint a fresh token via pelican and cache it. Returns None when the
+    device declares no bearer auth (a no-op the CLI reports friendlily)."""
+    env_var = _bearer_env(handle)
+    if env_var is None:
+        return None
+    pelican_root = handle.schema.pelican_root
+    if not pelican_root:
+        raise AuthError(
+            f"device '{handle.schema.name}' has no pelican_root; "
+            "cannot mint a token")
+    token = _pelican_get_token(pelican_root, write=write)
+    _write_cache(handle, token)
+    return CachedToken(device=handle.schema.name,
+                       scope="write" if write else "read",
+                       exp=decode_exp(token))
+
+
+def logout(handle) -> bool:
+    """Delete the device's managed cache file. Returns whether one was
+    removed."""
+    path = _cache_path(handle)
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
