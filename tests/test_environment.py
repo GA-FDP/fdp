@@ -20,6 +20,7 @@ import os
 import tempfile
 import time as _time
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -172,6 +173,30 @@ class TestSetupEnvironment(unittest.TestCase):
             self._cat_patch.start()
             from fdp.catalog import catalog as _cat
             _cat._cache = None
+
+    def test_warns_when_bearer_device_has_no_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".fdp").mkdir()
+            with mock.patch.object(Path, "home", return_value=home):
+                os.environ.pop("BEARER_TOKEN", None)
+                with self.assertWarns(UserWarning):
+                    setup_environment()
+
+    def test_no_warn_when_opted_out(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".fdp").mkdir()
+            with mock.patch.object(Path, "home", return_value=home):
+                os.environ.pop("BEARER_TOKEN", None)
+                os.environ["FDP_NO_AUTO_LOGIN"] = "1"
+                self.addCleanup(os.environ.pop, "FDP_NO_AUTO_LOGIN", None)
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    setup_environment()
+                self.assertEqual(
+                    [w for w in caught if issubclass(w.category, UserWarning)],
+                    [])
 
 
 _MAST_TEST_YAML = """\
