@@ -49,7 +49,7 @@ def decode_exp(token: str) -> "int | None":
 CACHE_MARGIN_SEC = 300
 
 
-def _bearer_env(handle) -> "str | None":
+def bearer_env(handle) -> "str | None":
     """The env-var name for this device's bearer auth, or None if the
     device declares no bearer_token locator."""
     for loc in handle.schema.locators:
@@ -85,7 +85,7 @@ def get_valid_token(handle, explicit=None) -> "str | None":
 
     An empty or None `explicit` is treated as 'no override'.
     """
-    env_var = _bearer_env(handle)
+    env_var = bearer_env(handle)
     if env_var is None:
         return None
     if explicit:
@@ -96,9 +96,14 @@ def get_valid_token(handle, explicit=None) -> "str | None":
     cached = _read_token_file(_cache_path(handle))
     if cached and _is_unexpired(cached):
         return cached
-    legacy = _read_token_file(Path.home() / ".fdp" / "token")
-    if legacy and _is_unexpired(legacy):
-        return legacy
+    legacy_path = Path.home() / ".fdp" / "token"
+    legacy = _read_token_file(legacy_path)
+    if legacy:
+        if _is_unexpired(legacy):
+            return legacy
+        warnings.warn(
+            f"{legacy_path} exists but is expired or not a valid JWT; "
+            "run `fdp login` to refresh.")
     return None
 
 
@@ -179,7 +184,7 @@ def _write_cache(handle, token: str) -> None:
 def login(handle, *, write: bool = False) -> "CachedToken | None":
     """Mint a fresh token via pelican and cache it. Returns None when the
     device declares no bearer auth (a no-op the CLI reports friendlily)."""
-    env_var = _bearer_env(handle)
+    env_var = bearer_env(handle)
     if env_var is None:
         return None
     pelican_root = handle.schema.pelican_root
@@ -221,7 +226,7 @@ def ensure_token(handle, explicit=None, *, interactive=None) -> "str | None":
     tok = get_valid_token(handle, explicit)
     if tok is not None:
         return tok
-    if _bearer_env(handle) is None:
+    if bearer_env(handle) is None:
         return None
     if not _auto_login_allowed(interactive):
         if not os.environ.get("FDP_NO_AUTO_LOGIN"):

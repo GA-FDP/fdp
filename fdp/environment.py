@@ -72,15 +72,6 @@ def _has_xrootd_transport(handle) -> bool:
     )
 
 
-def _has_bearer_auth(handle) -> bool:
-    if handle is None:
-        return False
-    return any(
-        getattr(l, "auth", None) is not None
-        and l.auth.kind == "bearer_token"
-        for l in handle.schema.locators
-    )
-
 
 def _generic_config(handle=None) -> dict:
     """FDP env vars. Universal vars are always emitted; transport/auth
@@ -270,7 +261,8 @@ def setup_environment(
         token = auth.get_valid_token(handle, explicit=bearer_token)
 
     if token is not None:
-        env_var = auth._bearer_env(handle) or "BEARER_TOKEN"
+        env_var = auth.bearer_env(handle) or "BEARER_TOKEN"
         os.environ[env_var] = token
-    elif auth._bearer_env(handle) is not None and not auto_login:
+    elif (auth.bearer_env(handle) is not None and not auto_login
+          and not os.environ.get("FDP_NO_AUTO_LOGIN")):
         warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")

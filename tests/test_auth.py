@@ -115,7 +115,13 @@ class TestGetValidToken(unittest.TestCase):
 
     def test_expired_legacy_skipped(self):
         self._write_legacy(_make_jwt(-10))
-        self.assertIsNone(auth.get_valid_token(_bearer_handle()))
+        with self.assertWarns(UserWarning):
+            self.assertIsNone(auth.get_valid_token(_bearer_handle()))
+
+    def test_unusable_legacy_file_warns(self):
+        self._write_legacy(_make_jwt(-10))
+        with self.assertWarns(UserWarning):
+            self.assertIsNone(auth.get_valid_token(_bearer_handle()))
 
     def test_all_empty_returns_none(self):
         self.assertIsNone(auth.get_valid_token(_bearer_handle()))
