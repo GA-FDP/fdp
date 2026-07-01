@@ -99,9 +99,33 @@ class TestGetValidToken(unittest.TestCase):
             auth.get_valid_token(_bearer_handle(), explicit="xtok"), "xtok")
 
     def test_env_var_used_verbatim(self):
+        # Opaque (non-JWT) env tokens are trusted verbatim — we cannot inspect
+        # their expiry, so we must not second-guess them.
         os.environ["BEARER_TOKEN"] = "envtok"
         self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
         self.assertEqual(auth.get_valid_token(_bearer_handle()), "envtok")
+
+    def test_unexpired_jwt_env_var_used(self):
+        tok = _make_jwt(3600)
+        os.environ["BEARER_TOKEN"] = tok
+        self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
+        self.assertEqual(auth.get_valid_token(_bearer_handle()), tok)
+
+    def test_expired_jwt_env_var_ignored_falls_to_cache(self):
+        # A stale exported BEARER_TOKEN must not shadow a freshly cached token
+        # (the trap that made `fdp login` appear to do nothing).
+        os.environ["BEARER_TOKEN"] = _make_jwt(-10)
+        self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
+        fresh = _make_jwt(3600)
+        self._write_cache("d3d", fresh)
+        with self.assertWarns(UserWarning):
+            self.assertEqual(auth.get_valid_token(_bearer_handle()), fresh)
+
+    def test_expired_jwt_env_var_ignored_returns_none_without_fallback(self):
+        os.environ["BEARER_TOKEN"] = _make_jwt(-10)
+        self.addCleanup(os.environ.pop, "BEARER_TOKEN", None)
+        with self.assertWarns(UserWarning):
+            self.assertIsNone(auth.get_valid_token(_bearer_handle()))
 
     def test_fresh_cache_used(self):
         token = _make_jwt(3600)

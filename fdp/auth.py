@@ -66,6 +66,13 @@ def _is_unexpired(token: str, margin: int = CACHE_MARGIN_SEC) -> bool:
     return exp is not None and exp >= time.time() + margin
 
 
+def _is_expired_jwt(token: str) -> bool:
+    """True iff `token` decodes to a JWT that is not currently usable (expired
+    or within the refresh margin). Opaque / non-JWT tokens (no decodable exp)
+    return False, so they are still trusted verbatim."""
+    return decode_exp(token) is not None and not _is_unexpired(token)
+
+
 def _cache_path(handle) -> Path:
     return Path.home() / ".fdp" / "cache" / f"{handle.schema.name}.token"
 
@@ -93,7 +100,16 @@ def get_valid_token(handle, explicit=None) -> "str | None":
         return explicit
     env_tok = os.environ.get(env_var)
     if env_tok:
-        return env_tok
+        # Trust an env-provided token verbatim UNLESS it decodes to an expired
+        # JWT: a stale exported BEARER_TOKEN otherwise silently shadows a fresh
+        # `fdp login` and yields a confusing 401 downstream.
+        if _is_expired_jwt(env_tok):
+            warnings.warn(
+                f"${env_var} is set but its token is expired; ignoring it and "
+                f"falling back to the cached/refreshed token. Unset {env_var} "
+                "or run `fdp login` to use a fresh token.")
+        else:
+            return env_tok
     cached = _read_token_file(_cache_path(handle))
     if cached and _is_unexpired(cached):
         return cached
