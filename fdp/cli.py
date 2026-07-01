@@ -320,11 +320,20 @@ def main(argv=None) -> None:
     # the FDP env and shouldn't require a device contributor to be
     # installed, so they opt out via `needs_env=False`.
     if getattr(args, "needs_env", True):
-        setup_environment(
-            device=args.default_device,
-            bearer_token=args.bearer_token or None,
-            auto_login=getattr(args, "auto_login", False),
-        )
+        # Device resolution can fail (e.g. no default chosen among several
+        # registered tokamaks); present it as a clean message, not a traceback.
+        try:
+            setup_environment(
+                device=args.default_device,
+                bearer_token=args.bearer_token or None,
+                auto_login=getattr(args, "auto_login", False),
+            )
+        except (ValueError, KeyError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except auth.AuthError as exc:
+            print(f"Login failed: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     args.func(args)
 

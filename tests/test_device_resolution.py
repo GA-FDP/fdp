@@ -128,6 +128,22 @@ class TestUnifiedDeviceResolution(unittest.TestCase):
         self.assertIn("FDP_DEFAULT_DEVICE", msg)
         self.assertIn("~/.fdp/config.toml", msg)
 
+    def test_fdp_run_multidevice_exits_cleanly_not_traceback(self):
+        # `fdp run` resolves the device in main() before dispatching; a
+        # multi-device ambiguity must surface as a clean Error + exit(1),
+        # not an uncaught traceback.
+        import io
+        import contextlib
+        from fdp import cli
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(stderr):
+            cli.main(["run", "true"])
+        self.assertEqual(ctx.exception.code, 1)
+        err = stderr.getvalue()
+        self.assertIn("Error:", err)
+        self.assertIn("--default-device", err)
+
     def test_env_var_selects_device(self):
         from fdp.environment import _resolve_device_handle
         os.environ["FDP_DEFAULT_DEVICE"] = "mast"
