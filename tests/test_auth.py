@@ -6,6 +6,7 @@
 import base64
 import json
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -155,10 +156,10 @@ class TestLoginLogout(unittest.TestCase):
 
     def test_login_writes_cache_0600(self):
         token = _make_jwt(3600)
-        fake = SimpleNamespace(returncode=0, stdout=json.dumps(
-            {"access_token": token}), stderr="")
+        fake = auth._PtyResult(returncode=0,
+                               output=json.dumps({"access_token": token}))
         with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
-             mock.patch.object(auth.subprocess, "run", return_value=fake):
+             mock.patch.object(auth, "_run_in_pty", return_value=fake):
             result = auth.login(_bearer_handle())
         self.assertEqual(result.device, "d3d")
         self.assertEqual(result.scope, "read")
@@ -168,9 +169,9 @@ class TestLoginLogout(unittest.TestCase):
 
     def test_login_write_scope_passes_write_arg(self):
         token = _make_jwt(3600)
-        fake = SimpleNamespace(returncode=0, stdout=token, stderr="")
+        fake = auth._PtyResult(returncode=0, output=token)
         with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
-             mock.patch.object(auth.subprocess, "run", return_value=fake) as run:
+             mock.patch.object(auth, "_run_in_pty", return_value=fake) as run:
             auth.login(_bearer_handle(), write=True)
         argv = run.call_args[0][0]
         self.assertIn("write", argv)
@@ -183,9 +184,9 @@ class TestLoginLogout(unittest.TestCase):
                 auth.login(_bearer_handle())
 
     def test_login_pelican_nonzero_raises_autherror(self):
-        fake = SimpleNamespace(returncode=1, stdout="", stderr="boom")
+        fake = auth._PtyResult(returncode=1, output="")
         with mock.patch.object(auth.shutil, "which", return_value="/bin/pelican"), \
-             mock.patch.object(auth.subprocess, "run", return_value=fake):
+             mock.patch.object(auth, "_run_in_pty", return_value=fake):
             with self.assertRaises(auth.AuthError):
                 auth.login(_bearer_handle())
 
@@ -228,6 +229,53 @@ class TestExtractToken(unittest.TestCase):
         out = auth._extract_token(json.dumps(
             {"access_token": "a.b.c", "token": "x.y.z"}))
         self.assertEqual(out, "a.b.c")
+
+    def test_interleaved_pty_stream_bare_jwt(self):
+        # What a PTY run really looks like: warnings + device URL, then the
+        # bare JWT printed last. The URL has >2 dots and must not be mistaken
+        # for the token.
+        stream = (
+            "WARNING Failed to renew an expired token\r\n"
+            "To approve, navigate to the following URL:\r\n"
+            "https://origin.example.org:8000/api/v1.0/issuer/device?"
+            "user_code=ABC\r\n"
+            "eyJhbGc.eyJleHA.sig\r\n"
+        )
+        self.assertEqual(auth._extract_token(stream), "eyJhbGc.eyJleHA.sig")
+
+    def test_interleaved_pty_stream_json_line(self):
+        stream = (
+            "WARNING something\r\n"
+            '{"access_token":"a.b.c","token_type":"Bearer"}\r\n'
+        )
+        self.assertEqual(auth._extract_token(stream), "a.b.c")
+
+
+class TestRunInPty(unittest.TestCase):
+    """The regression guard for the login bug: pelican gates interactive
+    token acquisition on stdout being a TTY, so _run_in_pty must give the
+    child a real terminal on stdout (not a pipe)."""
+
+    def test_child_sees_tty_on_stdout_and_output_captured(self):
+        # Mimic pelican's gate: fail unless stdout is a TTY, else emit a JWT.
+        script = (
+            "import sys;"
+            "sys.exit('must be run in a terminal') "
+            "if not sys.stdout.isatty() else print('h.p.s')"
+        )
+        result = auth._run_in_pty([sys.executable, "-c", script])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("h.p.s", result.output)
+        self.assertEqual(auth._extract_token(result.output), "h.p.s")
+
+    def test_nonzero_returncode_propagated(self):
+        result = auth._run_in_pty(
+            [sys.executable, "-c", "import sys; sys.exit(3)"])
+        self.assertEqual(result.returncode, 3)
+
+    def test_missing_binary_raises_oserror(self):
+        with self.assertRaises(OSError):
+            auth._run_in_pty(["/nonexistent/pelican-xyz"])
 
 
 class TestEnsureToken(unittest.TestCase):

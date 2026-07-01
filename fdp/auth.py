@@ -24,6 +24,7 @@ and cached per-device as bare JWTs under ~/.fdp/cache/.
 import base64
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -120,37 +121,141 @@ class CachedToken:
     exp: "int | None"
 
 
+def _token_from_json(text: str) -> "str | None":
+    """If *text* is a JSON dict carrying access_token/token, or a bare JSON
+    string, return that token; otherwise None."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(data, dict):
+        for key in ("access_token", "token"):
+            v = data.get(key)
+            if isinstance(v, str) and v:
+                return v
+    elif isinstance(data, str) and data:
+        return data
+    return None
+
+
 def _extract_token(stdout: str) -> "str | None":
-    """Pull the raw JWT out of pelican's output. Handles a bare JWT printed
-    on its own line (the observed real behavior), and also a --json dict or
-    bare JSON string for robustness across pelican versions."""
+    """Pull the raw JWT out of pelican's output.
+
+    Handles pure --json output (the whole stream is one JSON dict), and also
+    the interleaved stream produced when pelican runs under a PTY: WARNING
+    lines and the device-approval URL precede the token, which is printed
+    last. We therefore scan bottom-up, accepting either a per-line JSON dict
+    or a bare JWT (three dot-separated, space-free segments)."""
     text = stdout.strip()
     if not text:
         return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            for key in ("access_token", "token"):
-                v = data.get(key)
-                if isinstance(v, str) and v:
-                    return v
-        elif isinstance(data, str) and data:
-            return data
-    except (ValueError, TypeError):
-        pass
+    tok = _token_from_json(text)
+    if tok:
+        return tok
     for line in reversed(text.splitlines()):
         line = line.strip()
-        if line.count(".") == 2 and " " not in line:
+        if not line:
+            continue
+        tok = _token_from_json(line)
+        if tok:
+            return tok
+        if (line.count(".") == 2 and " " not in line
+                and "{" not in line and '"' not in line):
             return line
     return None
+
+
+@dataclass
+class _PtyResult:
+    """Exit status and combined terminal output of a PTY-hosted subprocess."""
+    returncode: int
+    output: str
+
+
+def _run_in_pty(cmd) -> "_PtyResult":
+    """Run *cmd* with stdin/stdout/stderr attached to a pseudo-terminal.
+
+    pelican gates *interactive* token acquisition on its **stdout** being a
+    TTY: once the cached refresh token expires it must re-consent via the
+    device-code/browser flow, and it refuses to start that flow when stdout
+    is a pipe. Capturing stdout with an ordinary pipe (the obvious approach)
+    therefore makes re-consent impossible. So we give pelican a real terminal
+    on all three fds. The child's combined output is streamed to our stderr
+    (the user sees the approval URL and any prompt live) while also being
+    captured, so the JWT can be parsed once the flow completes. When our own
+    stdin is a TTY it is forwarded to the child so the user can answer a
+    prompt. Silent renewal (valid refresh token) simply prints the token and
+    returns the same way -- no terminal interaction needed.
+    """
+    import pty  # POSIX-only; the whole FDP stack is Linux.
+
+    master, slave = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            cmd, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    except OSError:
+        os.close(master)
+        os.close(slave)
+        raise
+    os.close(slave)
+
+    try:
+        err_fd = sys.stderr.fileno()
+    except (OSError, ValueError, AttributeError):
+        err_fd = None
+    try:
+        stdin_fd = sys.stdin.fileno()
+        watch_stdin = sys.stdin.isatty()
+    except (OSError, ValueError, AttributeError):
+        stdin_fd, watch_stdin = None, False
+
+    chunks = []
+    try:
+        while True:
+            watch = [master] + ([stdin_fd] if watch_stdin else [])
+            try:
+                ready, _, _ = select.select(watch, [], [], 0.2)
+            except (OSError, ValueError):
+                break
+            if master in ready:
+                try:
+                    data = os.read(master, 4096)
+                except OSError:  # slave closed -> EIO on Linux
+                    data = b""
+                if not data:
+                    break
+                chunks.append(data)
+                if err_fd is not None:
+                    try:
+                        os.write(err_fd, data)
+                    except OSError:
+                        pass
+            if watch_stdin and stdin_fd in ready:
+                try:
+                    fwd = os.read(stdin_fd, 4096)
+                except OSError:
+                    fwd = b""
+                if fwd:
+                    try:
+                        os.write(master, fwd)
+                    except OSError:
+                        pass
+    finally:
+        os.close(master)
+    proc.wait()
+    return _PtyResult(
+        returncode=proc.returncode,
+        output=b"".join(chunks).decode("utf-8", errors="replace"))
 
 
 def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
     """Run the pelican OAuth flow and return the raw JWT.
 
-    pelican requires a TTY: stdin and stderr are inherited so the user sees
-    the device-code/browser prompt and can answer any password prompt; only
-    stdout (which carries the bare token) is captured.
+    pelican is run under a pseudo-terminal (see _run_in_pty) so its
+    stdout-is-a-TTY gate is satisfied and a fresh interactive consent can
+    proceed when the cached refresh token has expired -- the case where
+    piping stdout would make `fdp login` fail with "must be run in a
+    terminal".
     """
     pelican = shutil.which("pelican")
     if pelican is None:
@@ -159,13 +264,13 @@ def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
     cmd = [pelican, "credentials", "token", "get", scope, pelican_root,
            "--json"]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+        result = _run_in_pty(cmd)
     except OSError as exc:
         raise AuthError(f"failed to invoke pelican: {exc}")
-    if proc.returncode != 0:
+    if result.returncode != 0:
         raise AuthError(
-            f"pelican token request failed (exit {proc.returncode})")
-    token = _extract_token(proc.stdout)
+            f"pelican token request failed (exit {result.returncode})")
+    token = _extract_token(result.output)
     if not token:
         raise AuthError("could not parse a token from pelican output")
     return token
