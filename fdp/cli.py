@@ -96,24 +96,13 @@ def do_run(args) -> None:
 
 
 def _resolve_origin_server(device_name: str | None) -> str:
-    """Return the origin_server for the given tokamak name.
+    """Return the origin_server for the resolved tokamak.
 
-    If device_name is None, auto-selects when exactly one tokamak is
-    registered. Raises ``KeyError`` if the name is not found and
-    ``ValueError`` if no default can be determined.
+    Delegates to the shared device resolver so `fdp ls` honors the same
+    flag > FDP_DEFAULT_DEVICE > ~/.fdp/config.toml [device].default >
+    single-device resolution order as `fdp env`/`fdp run`.
     """
-    if device_name is not None:
-        return catalog[device_name].schema.origin_server
-    # Auto-detect
-    names = catalog.names()
-    if len(names) == 1:
-        return catalog[names[0]].schema.origin_server
-    if len(names) == 0:
-        raise ValueError("No tokamak contributors are installed.")
-    raise ValueError(
-        f"No default tokamak selected and {len(names)} are registered "
-        f"({names}). Pass --default-device."
-    )
+    return _resolve_device_handle(device_name).schema.origin_server
 
 
 def do_ls(args) -> None:

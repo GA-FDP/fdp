@@ -194,14 +194,32 @@ def apply_environment(config: dict, env: dict) -> None:
         env.setdefault(k, str(v))
 
 
+def _config_default_device():
+    """Return the default device name from ~/.fdp/config.toml [device].default,
+    or None if the file/section/key is absent or unreadable."""
+    import tomllib
+    path = Path.home() / ".fdp" / "config.toml"
+    if not path.is_file():
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    dev = data.get("device", {}).get("default")
+    return dev or None
+
+
 def _resolve_device_handle(device):
     """Return the TokamakHandle for the active device.
 
     Resolution order: explicit ``device`` arg, then ``$FDP_DEFAULT_DEVICE``,
-    then auto-select if exactly one tokamak is registered.
+    then ``~/.fdp/config.toml`` ``[device].default``, then auto-select if
+    exactly one tokamak is registered.
     """
     if device is None:
-        device = os.environ.get("FDP_DEFAULT_DEVICE") or None
+        device = (os.environ.get("FDP_DEFAULT_DEVICE")
+                  or _config_default_device() or None)
     if device is not None:
         return _catalog[device]
     names = _catalog.names()
@@ -214,7 +232,9 @@ def _resolve_device_handle(device):
         )
     raise ValueError(
         f"No default tokamak selected and {len(names)} are registered "
-        f"({names}). Pass --default-device or set FDP_DEFAULT_DEVICE."
+        f"({names}). Choose one with `fdp --default-device <name>`, set the "
+        f"FDP_DEFAULT_DEVICE environment variable, or add a [device] section "
+        f'with default = "<name>" to ~/.fdp/config.toml.'
     )
 
 
