@@ -73,6 +73,11 @@ class TestConfigFile(unittest.TestCase):
         self.path.write_text("not = valid = toml")
         self.assertIsNone(read_default_device())
 
+    def test_scalar_device_key_reads_as_none(self):
+        from fdp.config import read_default_device
+        self.path.write_text('device = "foo"\n')
+        self.assertIsNone(read_default_device())
+
 
 if __name__ == "__main__":
     unittest.main()

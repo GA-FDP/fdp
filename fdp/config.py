@@ -30,7 +30,10 @@ def read_default_device() -> "str | None":
             data = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    return data.get("device", {}).get("default") or None
+    device = data.get("device", {})
+    if not isinstance(device, dict):
+        return None
+    return device.get("default") or None
 
 
 _DEVICE_HEADER = re.compile(r"^\s*\[device\]\s*$")
