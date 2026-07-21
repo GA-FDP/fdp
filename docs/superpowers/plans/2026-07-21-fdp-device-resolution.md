@@ -820,8 +820,9 @@ Add to `fdp/environment.py`, immediately after `build_device_config`:
 class DeviceEnvConflict(ValueError):
     """Two registered devices assign different values to the same env var.
 
-    Subclasses ValueError so cli.main's existing handler renders it as a
-    clean message rather than a traceback.
+    Subclasses ValueError so cli.main's handler renders it as a clean
+    message rather than a traceback. Note that handler dispatch must also be
+    wrapped for this to hold -- see Task 4 Step 5.
     """
 
 
@@ -1021,25 +1022,64 @@ adding the flag to the subparsers:
 Then rename the remaining `args.default_device` references in `do_login`,
 `do_logout`, `do_ls`, and `_resolve_default_handle_or_none` to `args.device`.
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 5: Make errors raised by subcommand handlers render cleanly**
+
+`cli.main` wraps only `setup_environment` in its `except (ValueError, KeyError)`
+handler — `args.func(args)` (cli.py:337) is **outside** it. So a
+`DeviceEnvConflict` raised inside `do_env`, or the capability errors that
+`do_ls` and `do_device` will raise in Tasks 5 and 8, would print a traceback
+instead of the clean message the spec promises.
+
+Wrap the dispatch in `fdp/cli.py`, replacing the bare `args.func(args)`:
+
+```python
+    try:
+        args.func(args)
+    except (ValueError, KeyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+```
+
+`SystemExit` is not a subclass of either, so handlers that already call
+`sys.exit` (`do_ls`, `do_login`, `do_logout`) are unaffected.
+
+Add this test to `tests/test_composition.py` in `TestCompositionConflict`:
+
+```python
+    def test_cli_renders_conflict_without_traceback(self):
+        import contextlib
+        import io
+        from fdp import cli
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(stderr):
+            cli.main(["env"])
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("PTDATA_JSON_INDEX_DIR", stderr.getvalue())
+```
+
+- [ ] **Step 6: Run tests**
 
 Run: `pixi run python -m unittest discover -s tests -t tests -k test_fdp_run_multidevice -v`
+Expected: PASS
+
+Run: `pixi run python -m unittest discover -s tests -t tests -k test_cli_renders_conflict -v`
 Expected: PASS
 
 Run: `pixi run python -m unittest discover -s tests -t tests -v 2>&1 | tail -5`
 Expected: OK. In particular `test_env_parity.py` must still pass unchanged —
 composition must not perturb single-device output.
 
-- [ ] **Step 6: Verify by hand against the real catalog**
+- [ ] **Step 7: Verify by hand against the real catalog**
 
 Run: `pixi run fdp env | head -20`
 Expected: the same d3d exports as before this change (only d3d is installed in
 this dev env, so composition is a no-op here).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add fdp/environment.py fdp/cli.py tests/test_device_resolution.py
+git add fdp/environment.py fdp/cli.py tests/test_device_resolution.py tests/test_composition.py
 git commit -m "feat(environment): compose all device envs when none is selected
 
 Fixes 'No default tokamak selected and 2 are registered' on every command
