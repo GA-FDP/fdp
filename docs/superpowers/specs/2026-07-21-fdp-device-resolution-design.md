@@ -316,6 +316,7 @@ needed regardless.
 | D4 | Capability scoping instead of a global default | `ls` and `login` need different device sets; a global default answers a question they did not ask |
 | D5 | `--device` accepted before *and* after the subcommand | The natural form currently errors |
 | D6 | No `capabilities` field in `fdp_schema` | A declared list could drift from the locators backing it |
+| D7 | Ambiguity errors lead with the per-invocation flag; persistent remedies are labeled as affecting all commands | Capability ambiguity is per-command, but `FDP_DEFAULT_DEVICE` / `fdp device use` are global: following them to unstick `fdp ls` otherwise silently disables composition for `fdp env`/`fdp run`. Behavior is unchanged; only the guidance stops setting a trap |
 
 ## Release
 
