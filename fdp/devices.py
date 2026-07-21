@@ -43,7 +43,13 @@ _NO_DEVICES = (
 )
 
 
-def explicit_device_name(device: "str | None" = None) -> "str | None":
+def _listed(names) -> str:
+    """Render device/capability names for a message: ``d3d, devb, mast``.
+    Interpolating the list itself would leak Python repr punctuation."""
+    return ", ".join(names)
+
+
+def explicit_device_name(device: str | None = None) -> str | None:
     """The user's explicit choice, or None. Order: argument, then
     ``$FDP_DEFAULT_DEVICE``, then ``~/.fdp/config.toml`` ``[device].default``.
 
@@ -80,12 +86,12 @@ def _handle(name: str):
     names = _registered_names()
     if name not in names:
         raise ValueError(
-            f"Unknown device {name!r}. Registered devices: {names}."
+            f"Unknown device {name!r}. Registered devices: {_listed(names)}."
         )
     return _catalog[name]
 
 
-def active_handles(device: "str | None" = None) -> list:
+def active_handles(device: str | None = None) -> list:
     """Handles whose environments should be composed, sorted by name.
 
     An explicit selection narrows to that one device. Otherwise *every*
@@ -108,24 +114,53 @@ CAPABILITIES = {
 }
 
 
+def _capability(capability: str):
+    """The ``(predicate, description)`` pair for *capability*.
+
+    Indexing CAPABILITIES directly raises a bare ``KeyError('orgin')``. These
+    are public functions, so a typo deserves to say what the options are --
+    programmer error rather than user error, hence the terse message.
+    """
+    try:
+        return CAPABILITIES[capability]
+    except KeyError:
+        raise ValueError(
+            f"Unknown capability {capability!r}. "
+            f"Valid capabilities: {_listed(sorted(CAPABILITIES))}."
+        ) from None
+
+
 def candidate_devices(capability: str) -> list:
     """Registered devices that can service *capability*, sorted by name."""
-    predicate, _ = CAPABILITIES[capability]
+    predicate, _ = _capability(capability)
     handles = [_catalog[n] for n in _registered_names()]
     return [h for h in handles if predicate(h)]
 
 
+def _no_candidate_error(described: str) -> ValueError:
+    return ValueError(
+        f"No registered device declares {described}, so this command has "
+        f"nothing to act on."
+    )
+
+
 def resolve_for_capability(capability: str,
-                           device: "str | None" = None):
+                           device: str | None = None):
     """Resolve the single device to use for a capability-scoped command."""
-    predicate, described = CAPABILITIES[capability]
+    predicate, described = _capability(capability)
     name = explicit_device_name(device)
     if name is not None:
         handle = _handle(name)
         if not predicate(handle):
+            # The one message a user reaches by making a specific wrong
+            # choice, so it points at the right choice rather than just
+            # rejecting theirs.
+            capable = [h.schema.name for h in candidate_devices(capability)]
+            if not capable:
+                raise _no_candidate_error(described)
             raise ValueError(
                 f"Device {name!r} does not declare {described}, so it cannot "
-                f"service this command."
+                f"service this command. Devices that do: {_listed(capable)}."
             )
         return handle
 
@@ -133,18 +168,15 @@ def resolve_for_capability(capability: str,
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        raise ValueError(
-            f"No registered device declares {described}, so this command has "
-            f"nothing to act on."
-        )
+        raise _no_candidate_error(described)
     names = [h.schema.name for h in candidates]
     raise ValueError(
         f"{len(candidates)} registered devices declare {described} "
-        f"({names}). {_CHOOSE_HINT}"
+        f"({_listed(names)}). {_CHOOSE_HINT}"
     )
 
 
-def _resolve_device_handle(device: "str | None" = None):
+def _resolve_device_handle(device: str | None = None):
     """Resolve exactly one device: explicit choice, else the sole registered
     device, else error.
 
@@ -160,5 +192,5 @@ def _resolve_device_handle(device: "str | None" = None):
         return _catalog[names[0]]
     raise ValueError(
         f"No default tokamak selected and {len(names)} are registered "
-        f"({names}). {_CHOOSE_HINT}"
+        f"({_listed(names)}). {_CHOOSE_HINT}"
     )

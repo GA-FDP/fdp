@@ -96,33 +96,48 @@ def make_ep(name, yaml_text):
 
 
 class CatalogFixture(unittest.TestCase):
-    """Registers a set of fake devices and an empty temp $HOME."""
+    """Registers a set of fake devices and an empty temp $HOME.
+
+    Subclasses override ``YAMLS``; ``self._home`` is the temp home for tests
+    that need to write a config.toml. Every teardown step is registered with
+    ``addCleanup`` the instant its resource exists, so a failure part-way
+    through ``setUp`` (or in a subclass that extends it) can never leak the
+    ``entry_points`` / ``Path.home`` patches into unrelated test classes.
+    ``addCleanup`` also unwinds LIFO, which is the order we want.
+    """
 
     YAMLS = ()
 
     def setUp(self):
-        self._saved = os.environ.pop("FDP_DEFAULT_DEVICE", None)
+        saved = os.environ.pop("FDP_DEFAULT_DEVICE", None)
+        self.addCleanup(self._restore_env, saved)
+
+        self.addCleanup(self._reset_catalog_cache)
         eps = [make_ep(n, y) for n, y in self.YAMLS]
         self._cat_patch = mock.patch("fdp.catalog.entry_points",
                                      return_value=eps)
         self._cat_patch.start()
-        from fdp.catalog import catalog
-        catalog._cache = None
+        self.addCleanup(self._cat_patch.stop)
+        self._reset_catalog_cache()
+
         self._home_td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._home_td.cleanup)
         self._home = Path(self._home_td.name)
         (self._home / ".fdp").mkdir()
         self._home_patch = mock.patch.object(
             Path, "home", return_value=self._home)
         self._home_patch.start()
+        self.addCleanup(self._home_patch.stop)
 
-    def tearDown(self):
-        self._home_patch.stop()
-        self._home_td.cleanup()
-        self._cat_patch.stop()
+    @staticmethod
+    def _reset_catalog_cache():
         from fdp.catalog import catalog
         catalog._cache = None
-        if self._saved is not None:
-            os.environ["FDP_DEFAULT_DEVICE"] = self._saved
+
+    @staticmethod
+    def _restore_env(saved):
+        if saved is not None:
+            os.environ["FDP_DEFAULT_DEVICE"] = saved
         else:
             os.environ.pop("FDP_DEFAULT_DEVICE", None)
 
@@ -157,6 +172,33 @@ class TestCapabilityScoping(CatalogFixture):
             resolve_for_capability("origin", "mast")
         self.assertIn("mast", str(ctx.exception))
         self.assertIn("origin server", str(ctx.exception))
+
+    def test_explicit_incapable_device_names_a_capable_one(self):
+        # Rejecting the user's choice without naming a working one leaves
+        # them to guess.
+        from fdp.devices import resolve_for_capability
+        with self.assertRaises(ValueError) as ctx:
+            resolve_for_capability("origin", "mast")
+        self.assertIn("Devices that do: d3d", str(ctx.exception))
+
+    def test_messages_do_not_leak_python_list_repr(self):
+        from fdp.devices import _resolve_device_handle
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_device_handle(None)
+        msg = str(ctx.exception)
+        self.assertIn("d3d, mast", msg)
+        self.assertNotIn("['", msg)
+
+    def test_unknown_capability_names_the_valid_ones(self):
+        from fdp.devices import candidate_devices, resolve_for_capability
+        for call in (lambda: candidate_devices("orgin"),
+                     lambda: resolve_for_capability("orgin")):
+            with self.assertRaises(ValueError) as ctx:
+                call()
+            msg = str(ctx.exception)
+            self.assertIn("orgin", msg)
+            self.assertIn("origin", msg)
+            self.assertIn("bearer", msg)
 
     def test_explicit_capable_device_is_honored(self):
         from fdp.devices import resolve_for_capability
@@ -234,6 +276,16 @@ class TestNoCapableDevice(CatalogFixture):
         with self.assertRaises(ValueError) as ctx:
             resolve_for_capability("origin")
         self.assertIn("origin server", str(ctx.exception))
+
+    def test_explicit_incapable_device_falls_back_to_the_same_guidance(self):
+        # There is no capable device to point at, so "Devices that do: "
+        # would dangle; give the general message instead.
+        from fdp.devices import resolve_for_capability
+        with self.assertRaises(ValueError) as ctx:
+            resolve_for_capability("origin", "mast")
+        msg = str(ctx.exception)
+        self.assertIn("No registered device declares", msg)
+        self.assertNotIn("Devices that do", msg)
 
 
 class TestBlankOriginIsNotACandidate(CatalogFixture):
