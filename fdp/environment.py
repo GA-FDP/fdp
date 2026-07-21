@@ -35,6 +35,9 @@ from .devices import (  # noqa: F401
     active_handles, candidate_devices, resolve_for_capability,
     _resolve_device_handle,
 )
+# The one remedy string for "you must pick a device", shared so composition
+# and selection never drift into two divergent sets of instructions.
+from .devices import _CHOOSE_HINT
 
 
 def _get_default_xrd_pluginconfdir() -> str | None:
@@ -210,6 +213,53 @@ def build_device_config(handle) -> dict:
     config = _generic_config(handle)
     config.update(_tokamak_env(handle))
     return config
+
+
+class DeviceEnvConflict(ValueError):
+    """Two registered devices assign different values to the same env var.
+
+    Subclasses ValueError so cli.main's handler renders it as a clean
+    message rather than a traceback.
+    """
+
+
+def compose_device_config(handles) -> dict:
+    """Merge several devices' env dicts into one.
+
+    Devices are merged in catalog-name order -- ``active_handles`` already
+    sorts, but this is public and callers may pass any iterable, so the sort
+    is what makes the conflict message deterministic rather than a function
+    of entry-point discovery order.
+
+    Keys that several devices set to the *same* value (the thread-affinity
+    vars and PATH) merge silently; only a genuine disagreement is an error.
+    Values are compared as strings because that is what actually reaches the
+    environment (``apply_environment`` stringifies too), so ``1`` and ``"1"``
+    from two devices' ``extra_env`` are the agreement they look like.
+    """
+    merged: dict = {}
+    source: dict = {}
+    for handle in sorted(handles, key=lambda h: h.schema.name):
+        name = handle.schema.name
+        for key, value in build_device_config(handle).items():
+            if value is None:
+                continue  # matches apply_environment, which skips None
+            value = str(value)
+            if key in merged and merged[key] != value:
+                raise DeviceEnvConflict(
+                    f"Devices {source[key]!r} and {name!r} set {key} to "
+                    f"different values, so their environments cannot be "
+                    f"combined:\n"
+                    f"  {source[key]} = {merged[key]}\n"
+                    f"  {name} = {value}\n"
+                    f"{_CHOOSE_HINT}"
+                )
+            if key not in merged:
+                # First writer wins the attribution: a later device that
+                # *agrees* is not part of any subsequent disagreement.
+                merged[key] = value
+                source[key] = name
+    return merged
 
 
 def resolve_bearer_token(handle, bearer_token=None) -> "str | None":
