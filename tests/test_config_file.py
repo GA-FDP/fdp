@@ -113,14 +113,21 @@ class TestConfigFile(unittest.TestCase):
         self.assertIn("# pinned by ops", text)
         self.assertEqual(read_default_device(), "d3d")
 
-    def test_duplicate_default_lines_collapse(self):
-        from fdp.config import read_default_device, set_default_device
-        self.path.write_text(
-            '[device]\ndefault = "mast"\ndefault = "old"\n')
-        set_default_device("d3d")
-        text = self.path.read_text()
-        self.assertEqual(text.count("default ="), 1)
-        self.assertEqual(read_default_device(), "d3d")
+    def test_duplicate_default_key_is_invalid_toml_and_rejected(self):
+        # A `default =` key repeated under one [device] table is not
+        # actually legal TOML (a spec-compliant parser refuses to
+        # redeclare a key) -- confirmed by tomllib raising "Cannot
+        # overwrite a value" on this exact text. So this is a
+        # pre-existing-broken-file case (see item 2), not a case the
+        # in-loop duplicate-line guard needs to collapse: that guard
+        # exists as defense in depth, but a real duplicate key is now
+        # caught earlier, before any line-editing is attempted.
+        from fdp.config import set_default_device
+        text = '[device]\ndefault = "mast"\ndefault = "old"\n'
+        self.path.write_text(text)
+        with self.assertRaises(ValueError):
+            set_default_device("d3d")
+        self.assertEqual(self.path.read_text(), text)
 
     def test_idempotent_repeat_calls(self):
         from fdp.config import read_default_device, set_default_device
@@ -146,6 +153,39 @@ class TestConfigFile(unittest.TestCase):
         self.assertFalse(self.path.exists())
         set_default_device(None)
         self.assertFalse(self.path.exists())
+
+    def test_symlinked_config_write_follows_link(self):
+        from fdp.config import read_default_device, set_default_device
+        real = self._home / "real.toml"
+        real.write_text('[llm]\nbackend = "amsc"\n')
+        self.path.symlink_to(real)
+        set_default_device("d3d")
+        self.assertTrue(self.path.is_symlink())
+        self.assertEqual(self.path.resolve(), real.resolve())
+        self.assertIn('backend = "amsc"', real.read_text())
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_preexisting_invalid_toml_raises_value_error(self):
+        from fdp.config import set_default_device
+        self.path.write_text("not = valid = toml")
+        with self.assertRaises(ValueError):
+            set_default_device("d3d")
+
+    def test_refused_write_leaves_file_byte_identical(self):
+        from fdp.config import set_default_device
+        self.path.write_text('device = { default = "mast" }\n')
+        before = self.path.read_text()
+        with self.assertRaises(RuntimeError):
+            set_default_device("d3d")
+        self.assertEqual(self.path.read_text(), before)
+
+    def test_refused_write_leaves_no_stray_temp_files(self):
+        from fdp.config import set_default_device
+        self.path.write_text('device = { default = "mast" }\n')
+        with self.assertRaises(RuntimeError):
+            set_default_device("d3d")
+        entries = list(self.path.parent.iterdir())
+        self.assertEqual(entries, [self.path])
 
 
 if __name__ == "__main__":

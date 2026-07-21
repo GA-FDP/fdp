@@ -54,11 +54,22 @@ def set_default_device(name: "str | None") -> None:
     along with the line, and CRLF line endings / trailing blank lines are
     normalized.
 
+    If the config path is a symlink (e.g. a dotfile manager like
+    stow/chezmoi/yadm linking ``~/.fdp/config.toml`` to a tracked file
+    elsewhere), the write lands on the link's target and the symlink itself
+    is left in place. The file is written with mode 0600
+    (readable/writable only by the owner), since it may hold LLM API keys.
+
     Raises ``ValueError`` if *name* is not a bare identifier-like string
-    (letters, digits, ``_``, ``-``, ``.``). Raises ``RuntimeError`` instead
-    of writing if the resulting text would not be valid TOML (this should
-    only happen for a ``[device]`` header spelling this module fails to
-    recognize).
+    (letters, digits, ``_``, ``-``, ``.``), or if the existing file is not
+    valid TOML — a pre-existing problem, not one this edit caused, so it's
+    reported as a user error rather than swallowed like `read_default_device`
+    does. Raises ``RuntimeError`` instead of writing if *this edit* would
+    itself produce invalid TOML — a bug in this module's line-editing logic
+    (e.g. an unrecognized ``[device]`` header spelling, or a ``device`` key
+    written in a form, like an inline table, this simple line-editor can't
+    safely reason about) — so a config that was valid before the call is
+    never corrupted by the call.
     """
     if name is not None and not _DEVICE_NAME.match(name):
         raise ValueError(f"invalid device name: {name!r}")
@@ -67,7 +78,15 @@ def set_default_device(name: "str | None") -> None:
     if name is None and not path.is_file():
         return  # nothing to clear, and nothing to create
 
-    lines = path.read_text().splitlines() if path.is_file() else []
+    original_text = path.read_text() if path.is_file() else ""
+    if path.is_file():
+        try:
+            tomllib.loads(original_text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(
+                f"{path} is not valid TOML ({exc}); fix or remove it"
+            ) from exc
+    lines = original_text.splitlines()
 
     out: list[str] = []
     in_device = False
@@ -111,14 +130,18 @@ def set_default_device(name: "str | None") -> None:
             f"({exc})"
         ) from exc
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Resolve symlinks so a symlinked config has its target updated in
+    # place (os.replace does not follow symlinks; it would otherwise
+    # delete the link and leave the real file untouched).
+    target = path.resolve() if path.exists() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=".config.toml.", suffix=".tmp"
+        dir=target.parent, prefix=".config.toml.", suffix=".tmp"
     )
     try:
         with os.fdopen(tmp_fd, "w") as fh:
             fh.write(new_text)
-        os.replace(tmp_name, path)
+        os.replace(tmp_name, target)
     except BaseException:
         try:
             os.unlink(tmp_name)
