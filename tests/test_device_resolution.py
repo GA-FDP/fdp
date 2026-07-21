@@ -124,7 +124,7 @@ class TestUnifiedDeviceResolution(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             _resolve_device_handle(None)
         msg = str(ctx.exception)
-        self.assertIn("--default-device", msg)
+        self.assertIn("--device", msg)
         self.assertIn("FDP_DEFAULT_DEVICE", msg)
         self.assertIn("~/.fdp/config.toml", msg)
 
@@ -142,7 +142,7 @@ class TestUnifiedDeviceResolution(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 1)
         err = stderr.getvalue()
         self.assertIn("Error:", err)
-        self.assertIn("--default-device", err)
+        self.assertIn("--device", err)
 
     def test_env_var_selects_device(self):
         from fdp.environment import _resolve_device_handle
@@ -214,7 +214,7 @@ class TestUnifiedDeviceResolution(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             _resolve_origin_server(None)
         msg = str(ctx.exception)
-        self.assertIn("--default-device", msg)
+        self.assertIn("--device", msg)
         self.assertIn("FDP_DEFAULT_DEVICE", msg)
         self.assertIn("~/.fdp/config.toml", msg)
 
