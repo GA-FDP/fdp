@@ -4,6 +4,7 @@
 """Round-trip tests for ~/.fdp/config.toml handling."""
 
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -77,6 +78,74 @@ class TestConfigFile(unittest.TestCase):
         from fdp.config import read_default_device
         self.path.write_text('device = "foo"\n')
         self.assertIsNone(read_default_device())
+
+    def test_device_header_with_trailing_comment(self):
+        from fdp.config import read_default_device, set_default_device
+        self.path.write_text('[device] # notes\ndefault = "mast"\n')
+        set_default_device("d3d")
+        text = self.path.read_text()
+        tomllib.loads(text)  # must still be valid TOML
+        self.assertEqual(text.count("[device]"), 1)
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_device_header_with_inner_spaces(self):
+        from fdp.config import read_default_device, set_default_device
+        self.path.write_text('[ device ]\ndefault = "mast"\n')
+        set_default_device("d3d")
+        text = self.path.read_text()
+        tomllib.loads(text)  # must still be valid TOML
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_device_header_quoted(self):
+        from fdp.config import read_default_device, set_default_device
+        self.path.write_text('["device"]\ndefault = "mast"\n')
+        set_default_device("d3d")
+        text = self.path.read_text()
+        tomllib.loads(text)  # must still be valid TOML
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_comments_inside_device_section_survive(self):
+        from fdp.config import read_default_device, set_default_device
+        self.path.write_text(
+            '[device]\n# pinned by ops\ndefault = "mast"\n')
+        set_default_device("d3d")
+        text = self.path.read_text()
+        self.assertIn("# pinned by ops", text)
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_duplicate_default_lines_collapse(self):
+        from fdp.config import read_default_device, set_default_device
+        self.path.write_text(
+            '[device]\ndefault = "mast"\ndefault = "old"\n')
+        set_default_device("d3d")
+        text = self.path.read_text()
+        self.assertEqual(text.count("default ="), 1)
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_idempotent_repeat_calls(self):
+        from fdp.config import read_default_device, set_default_device
+        set_default_device("d3d")
+        first = self.path.read_text()
+        set_default_device("d3d")
+        second = self.path.read_text()
+        self.assertEqual(first, second)
+        self.assertEqual(read_default_device(), "d3d")
+
+    def test_non_string_default_value_reads_as_none(self):
+        from fdp.config import read_default_device
+        self.path.write_text("[device]\ndefault = 3\n")
+        self.assertIsNone(read_default_device())
+
+    def test_invalid_device_name_raises(self):
+        from fdp.config import set_default_device
+        with self.assertRaises(ValueError):
+            set_default_device('ev"il')
+
+    def test_clear_with_no_config_creates_no_file(self):
+        from fdp.config import set_default_device
+        self.assertFalse(self.path.exists())
+        set_default_device(None)
+        self.assertFalse(self.path.exists())
 
 
 if __name__ == "__main__":
