@@ -9,7 +9,9 @@ parse-and-reserialize round trip: the file also carries an ``[llm]`` section
 rewrite would silently discard.
 """
 
+import os
 import re
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -20,8 +22,8 @@ def config_path() -> Path:
 
 
 def read_default_device() -> "str | None":
-    """``[device].default``, or None if the file, section, or key is absent
-    or the file is unreadable/malformed."""
+    """``[device].default``, or None if the file, section, or key is absent,
+    not a non-empty string, or the file is unreadable/malformed."""
     path = config_path()
     if not path.is_file():
         return None
@@ -33,19 +35,38 @@ def read_default_device() -> "str | None":
     device = data.get("device", {})
     if not isinstance(device, dict):
         return None
-    return device.get("default") or None
+    value = device.get("default")
+    return value if isinstance(value, str) and value else None
 
 
-_DEVICE_HEADER = re.compile(r"^\s*\[device\]\s*$")
+_DEVICE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+_DEVICE_HEADER = re.compile(
+    r"""^\s*\[\s*(?:device|"device"|'device')\s*\]\s*(?:\#.*)?$"""
+)
 _ANY_HEADER = re.compile(r"^\s*\[")
 _DEFAULT_KEY = re.compile(r"^\s*default\s*=")
 
 
 def set_default_device(name: "str | None") -> None:
     """Set ``[device].default`` to *name*, or remove the key when *name* is
-    None. All other sections, keys, and comments are preserved verbatim."""
+    None. All other sections, keys, and comments are preserved verbatim,
+    except: a trailing comment on the ``default =`` line itself is dropped
+    along with the line, and CRLF line endings / trailing blank lines are
+    normalized.
+
+    Raises ``ValueError`` if *name* is not a bare identifier-like string
+    (letters, digits, ``_``, ``-``, ``.``). Raises ``RuntimeError`` instead
+    of writing if the resulting text would not be valid TOML (this should
+    only happen for a ``[device]`` header spelling this module fails to
+    recognize).
+    """
+    if name is not None and not _DEVICE_NAME.match(name):
+        raise ValueError(f"invalid device name: {name!r}")
+
     path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if name is None and not path.is_file():
+        return  # nothing to clear, and nothing to create
+
     lines = path.read_text().splitlines() if path.is_file() else []
 
     out: list[str] = []
@@ -80,4 +101,27 @@ def set_default_device(name: "str | None") -> None:
         out.append("[device]")
         out.append(f'default = "{name}"')
 
-    path.write_text("\n".join(out).rstrip("\n") + "\n")
+    new_text = "\n".join(out).rstrip("\n") + "\n"
+
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise RuntimeError(
+            f"refusing to write {path}: edit would produce invalid TOML "
+            f"({exc})"
+        ) from exc
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=".config.toml.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as fh:
+            fh.write(new_text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
