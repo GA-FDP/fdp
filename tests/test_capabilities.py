@@ -260,6 +260,23 @@ class TestGenuineAmbiguity(CatalogFixture):
         self.assertIn("devb", msg)
         self.assertIn("fdp device use", msg)
 
+    def test_hint_leads_with_the_per_invocation_remedy(self):
+        # Spec D7: capability ambiguity is per-command, but FDP_DEFAULT_DEVICE
+        # and `fdp device use` are global -- following them to unstick
+        # `fdp ls` would silently stop `fdp env`/`fdp run` from composing
+        # every installed device. The hint must lead with `--device` and label
+        # the persistent remedies, so it does not set that trap.
+        from fdp.devices import resolve_for_capability
+        with self.assertRaises(ValueError) as ctx:
+            resolve_for_capability("origin")
+        msg = str(ctx.exception)
+        self.assertLess(msg.index("--device"), msg.index("FDP_DEFAULT_DEVICE"))
+        self.assertLess(msg.index("--device"), msg.index("fdp device use"))
+        self.assertIn("ALL commands", msg)
+        self.assertIn("`fdp env`/`fdp run`", msg)
+        # `fdp device use` alone doesn't say which file it writes.
+        self.assertIn("~/.fdp/config.toml", msg)
+
     def test_explicit_selection_resolves_the_ambiguity(self):
         from fdp.devices import resolve_for_capability
         self.assertEqual(
