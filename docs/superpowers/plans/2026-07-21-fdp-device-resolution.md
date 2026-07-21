@@ -511,10 +511,16 @@ from . import auth
 from .catalog import catalog as _catalog
 from .config import read_default_device
 
+# Per-invocation remedy first. The persistent remedies are labeled because
+# they are global: an explicit selection narrows active_handles() to one
+# device, so setting a default to unstick `fdp ls` would silently stop
+# `fdp env`/`fdp run` from composing every installed device. See spec D7.
 _CHOOSE_HINT = (
-    "Choose one with `fdp --device <name> ...`, set the FDP_DEFAULT_DEVICE "
-    "environment variable, or run `fdp device use <name>` to record it in "
-    "~/.fdp/config.toml."
+    "Choose one for this command with `fdp --device <name> ...`.\n"
+    "To make a device permanent for ALL commands (this also stops "
+    "`fdp env`/`fdp run` from combining every installed device):\n"
+    "  export FDP_DEFAULT_DEVICE=<name>\n"
+    "  fdp device use <name>"
 )
 
 _NO_DEVICES = (
