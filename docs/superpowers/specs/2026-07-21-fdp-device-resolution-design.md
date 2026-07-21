@@ -144,13 +144,11 @@ path relative to the origin, so this is a convenience, not the mechanism.
 
 ### 3. Auto-login under composition
 
-**Open decision (D3) — recommendation below, confirm before implementing.**
-
 `fdp run` sets `auto_login=True`, which triggers the interactive `pelican`
 consent flow when no valid token is found. Under composition, "which devices do
 we ensure tokens for?" becomes live.
 
-Recommendation: **auto-login only when exactly one registered device declares
+**Decided: auto-login only when exactly one registered device declares
 bearer auth.** If several do, emit the composed env without tokens and warn
 `run 'fdp login --device <name>'`. This preserves today's behavior exactly for
 every current user (d3d auto-logs-in; mast needs nothing) and fails toward "no
@@ -314,7 +312,7 @@ needed regardless.
 |---|---|---|
 | D1 | Compose env rather than select a device for `run`/`env` | The devices do not actually conflict; measured 0 collisions |
 | D2 | Hard error on a genuine key conflict | Never silently wrong; failure lands at the cause |
-| D3 | Auto-login only when exactly one device declares bearer auth | **Open — confirm.** Preserves current behavior; no surprise prompts |
+| D3 | Auto-login only when exactly one device declares bearer auth | Preserves current behavior; fails toward "no surprise prompt" |
 | D4 | Capability scoping instead of a global default | `ls` and `login` need different device sets; a global default answers a question they did not ask |
 | D5 | `--device` accepted before *and* after the subcommand | The natural form currently errors |
 | D6 | No `capabilities` field in `fdp_schema` | A declared list could drift from the locators backing it |
