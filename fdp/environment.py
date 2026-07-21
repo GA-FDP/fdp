@@ -26,7 +26,15 @@ import warnings
 from pathlib import Path
 
 from . import auth
-from .catalog import catalog as _catalog
+
+# Selection moved to fdp/devices.py; re-exported so existing imports of
+# `fdp.environment._resolve_device_handle` (cli.py, tests, downstream shims
+# in toksearch_d3d / toksearch_mast) keep working.
+from .config import read_default_device as _config_default_device  # noqa: F401
+from .devices import (  # noqa: F401
+    active_handles, candidate_devices, resolve_for_capability,
+    _resolve_device_handle,
+)
 
 
 def _get_default_xrd_pluginconfdir() -> str | None:
@@ -192,50 +200,6 @@ def apply_environment(config: dict, env: dict) -> None:
         if k == "PATH" or v is None:
             continue
         env.setdefault(k, str(v))
-
-
-def _config_default_device():
-    """Return the default device name from ~/.fdp/config.toml [device].default,
-    or None if the file/section/key is absent or unreadable."""
-    import tomllib
-    path = Path.home() / ".fdp" / "config.toml"
-    if not path.is_file():
-        return None
-    try:
-        with open(path, "rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
-    dev = data.get("device", {}).get("default")
-    return dev or None
-
-
-def _resolve_device_handle(device):
-    """Return the TokamakHandle for the active device.
-
-    Resolution order: explicit ``device`` arg, then ``$FDP_DEFAULT_DEVICE``,
-    then ``~/.fdp/config.toml`` ``[device].default``, then auto-select if
-    exactly one tokamak is registered.
-    """
-    if device is None:
-        device = (os.environ.get("FDP_DEFAULT_DEVICE")
-                  or _config_default_device() or None)
-    if device is not None:
-        return _catalog[device]
-    names = _catalog.names()
-    if len(names) == 1:
-        return _catalog[names[0]]
-    if len(names) == 0:
-        raise ValueError(
-            "No tokamak contributors are installed. "
-            "Install a device package (e.g. toksearch_d3d) to provide one."
-        )
-    raise ValueError(
-        f"No default tokamak selected and {len(names)} are registered "
-        f"({names}). Choose one with `fdp --default-device <name>`, set the "
-        f"FDP_DEFAULT_DEVICE environment variable, or add a [device] section "
-        f'with default = "<name>" to ~/.fdp/config.toml.'
-    )
 
 
 def build_device_config(handle) -> dict:
