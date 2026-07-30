@@ -253,20 +253,44 @@ class TestCapabilityScoping(CatalogFixture):
             _device_for_ls("pelican://test/fdp-d3d/archives", "mast")
 
     def test_login_resolves_to_the_only_bearer_device(self):
+        import argparse
+        import contextlib
+        import io
         from fdp import cli
-        with mock.patch("fdp.auth.login") as m:
+        # argparse.Namespace (not mock.Mock) is a strict double: it raises
+        # AttributeError if do_login reads an unexpected arg, rather than
+        # silently auto-vivifying a child mock.
+        args = argparse.Namespace(device=None, write=False)
+        with mock.patch("fdp.auth.login") as m, \
+                contextlib.redirect_stdout(io.StringIO()):
             m.return_value = None
-            cli.do_login(mock.Mock(device=None, write=False))
+            cli.do_login(args)
         self.assertEqual(m.call_args[0][0].schema.name, "d3d")
 
     def test_login_rejects_device_without_bearer_auth(self):
+        import argparse
         import contextlib
         import io
         from fdp import cli
         stderr = io.StringIO()
         with self.assertRaises(SystemExit) as ctx, \
                 contextlib.redirect_stderr(stderr):
-            cli.do_login(mock.Mock(device="mast", write=False))
+            cli.do_login(argparse.Namespace(device="mast", write=False))
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("bearer", stderr.getvalue())
+
+    def test_logout_rejects_device_without_bearer_auth(self):
+        # Symmetric with the login rejection: logout is scoped to bearer
+        # devices too, so an explicit non-bearer device must clean-error
+        # rather than silently resolve.
+        import argparse
+        import contextlib
+        import io
+        from fdp import cli
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(stderr):
+            cli.do_logout(argparse.Namespace(device="mast"))
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("bearer", stderr.getvalue())
 
