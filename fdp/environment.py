@@ -269,6 +269,38 @@ def resolve_bearer_token(handle, bearer_token=None) -> "str | None":
     return auth.get_valid_token(handle, explicit=bearer_token)
 
 
+def _apply_tokens(handles, bearer_token, auto_login) -> None:
+    """Resolve and export a bearer token for each device that wants one.
+
+    Auto-login fires only when exactly one registered device declares bearer
+    auth. With several, we cannot justify choosing whose consent flow to
+    launch, so we emit the env without tokens and say what to run. This keeps
+    today's behavior identical (d3d needs a token, mast does not) and fails
+    toward "no surprise prompt".
+
+    The warning only fires on the non-interactive ``get_valid_token`` path.
+    On the interactive ``ensure_token`` path (single bearer device +
+    auto_login), ``ensure_token`` already warns for itself, so warning again
+    here would double up on the common ``fdp run`` case.
+    """
+    bearers = [h for h in handles if auth.bearer_env(h) is not None]
+    single = len(bearers) == 1
+    for handle in bearers:
+        if auto_login and single:
+            token = auth.ensure_token(handle, explicit=bearer_token)
+        else:
+            token = auth.get_valid_token(handle, explicit=bearer_token)
+        if token is not None:
+            os.environ[auth.bearer_env(handle)] = token
+        elif not (auto_login and single) and not os.environ.get(
+                "FDP_NO_AUTO_LOGIN"):
+            suffix = "" if single else f" --device {handle.schema.name}"
+            warnings.warn(
+                f"No valid bearer token for device "
+                f"'{handle.schema.name}'; run `fdp login{suffix}`."
+            )
+
+
 def setup_environment(
     device: str | None = None,
     bearer_token: str | None = None,
@@ -276,27 +308,18 @@ def setup_environment(
     auto_login: bool = False,
     **overrides,
 ) -> None:
-    """Populate os.environ with FDP variables for the active tokamak.
+    """Populate os.environ with FDP variables.
 
-    Env emission is locator-driven. When auto_login is True (set by
-    `fdp run`), a missing/expired token triggers the interactive
-    `fdp login` flow subject to TTY / FDP_NO_AUTO_LOGIN gating. Mutates
-    os.environ in place. Safe to call repeatedly.
+    With no device selected, every registered device's environment is
+    composed; a genuine key conflict raises DeviceEnvConflict. Selecting a
+    device (argument, $FDP_DEFAULT_DEVICE, or ~/.fdp/config.toml) narrows to
+    that one. Env emission is locator-driven. Mutates os.environ in place and
+    is safe to call repeatedly.
     """
-    handle = _resolve_device_handle(device)
-    apply_environment(build_device_config(handle), os.environ)
+    handles = active_handles(device)
+    apply_environment(compose_device_config(handles), os.environ)
 
     for key, value in overrides.items():
         os.environ[key] = str(value)
 
-    if auto_login:
-        token = auth.ensure_token(handle, explicit=bearer_token)
-    else:
-        token = auth.get_valid_token(handle, explicit=bearer_token)
-
-    if token is not None:
-        env_var = auth.bearer_env(handle) or "BEARER_TOKEN"
-        os.environ[env_var] = token
-    elif (auth.bearer_env(handle) is not None and not auto_login
-          and not os.environ.get("FDP_NO_AUTO_LOGIN")):
-        warnings.warn("No valid BEARER_TOKEN found; run `fdp login`.")
+    _apply_tokens(handles, bearer_token, auto_login)

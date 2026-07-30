@@ -23,9 +23,9 @@ from pathlib import Path
 
 from . import auth
 from .catalog import catalog
+from .devices import active_handles, _resolve_device_handle
 from .environment import (
-    build_device_config, resolve_bearer_token, _resolve_device_handle,
-    setup_environment,
+    compose_device_config, resolve_bearer_token, setup_environment,
 )
 from .filesystem import FdpFileSystem
 from .llm_shims import do_backends as _llm_do_backends
@@ -39,21 +39,23 @@ from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 # ----------------------------------------------------------------------
 
 def do_env(args) -> None:
-    handle = _resolve_device_handle(args.default_device)
-    config = build_device_config(handle)
-    for key, value in config.items():
+    handles = active_handles(args.device)
+    for key, value in compose_device_config(handles).items():
         if value is None:
             continue
         print(f"export {key}={shlex.quote(str(value))}")
-    token = resolve_bearer_token(handle)
-    if token:
-        env_var = auth.bearer_env(handle) or "BEARER_TOKEN"
-        print(f"export {env_var}={shlex.quote(token)}")
+    for handle in handles:
+        env_var = auth.bearer_env(handle)
+        if env_var is None:
+            continue
+        token = resolve_bearer_token(handle)
+        if token:
+            print(f"export {env_var}={shlex.quote(token)}")
 
 
 def do_login(args) -> None:
     try:
-        handle = _resolve_device_handle(args.default_device)
+        handle = _resolve_device_handle(args.device)
         result = auth.login(handle, write=args.write)
     except (ValueError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -75,7 +77,7 @@ def do_login(args) -> None:
 
 def do_logout(args) -> None:
     try:
-        handle = _resolve_device_handle(args.default_device)
+        handle = _resolve_device_handle(args.device)
     except (ValueError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -106,7 +108,7 @@ def _resolve_origin_server(device_name: str | None) -> str:
 
 
 def do_ls(args) -> None:
-    origin = _resolve_origin_server(args.default_device)
+    origin = _resolve_origin_server(args.device)
     fs = FdpFileSystem(origin)
     listing = fs.ls(args.path, dirs_only=args.dirs_only)
     if listing:
@@ -175,7 +177,7 @@ def _resolve_default_handle_or_none(args):
     contributors are installed. chat / query are pure LLM operations and
     degrade gracefully when run in a bare fdp dev env."""
     try:
-        name = args.default_device
+        name = args.device
         if name is not None:
             return catalog[name]
         names = catalog.names()
@@ -222,10 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="CLI interface for the Fusion Data Platform"
     )
-    parser.add_argument("--default-device", "-D", default=None,
-                         help="Default device for non-agent subcommands; "
-                              "agent (chat/query) uses this as the "
-                              "starting device.")
+    parser.add_argument("--device", "-D", "--default-device", dest="device",
+                         default=None,
+                         help="Device (tokamak) to use for this command.")
     parser.add_argument("--bearer-token", "-t", default="",
                          help="Override BEARER_TOKEN for this invocation.")
     parser.add_argument("--debug", action="store_true",
@@ -324,7 +325,7 @@ def main(argv=None) -> None:
         # registered tokamaks); present it as a clean message, not a traceback.
         try:
             setup_environment(
-                device=args.default_device,
+                device=args.device,
                 bearer_token=args.bearer_token or None,
                 auto_login=getattr(args, "auto_login", False),
             )
@@ -335,7 +336,11 @@ def main(argv=None) -> None:
             print(f"Login failed: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except (ValueError, KeyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
