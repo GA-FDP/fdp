@@ -128,21 +128,25 @@ class TestUnifiedDeviceResolution(unittest.TestCase):
         self.assertIn("FDP_DEFAULT_DEVICE", msg)
         self.assertIn("~/.fdp/config.toml", msg)
 
-    def test_fdp_run_multidevice_exits_cleanly_not_traceback(self):
-        # `fdp run` resolves the device in main() before dispatching; a
-        # multi-device ambiguity must surface as a clean Error + exit(1),
-        # not an uncaught traceback.
-        import io
+    def test_fdp_run_multidevice_succeeds_via_composition(self):
+        # Two devices registered and nothing selected: `fdp run` must now
+        # compose both environments and succeed, because d3d and mast set
+        # disjoint variables. Previously this exited 1.
+        #
+        # auth.ensure_token is patched because the fake d3d declares bearer
+        # auth, and `fdp run` sets auto_login=True: unpatched, this test would
+        # reach the real interactive `pelican` consent flow. It previously
+        # errored out before ever getting near auth.
         import contextlib
+        import io
         from fdp import cli
         stderr = io.StringIO()
-        with self.assertRaises(SystemExit) as ctx, \
+        with mock.patch("fdp.auth.ensure_token", return_value=None), \
+                self.assertRaises(SystemExit) as ctx, \
                 contextlib.redirect_stderr(stderr):
             cli.main(["run", "true"])
-        self.assertEqual(ctx.exception.code, 1)
-        err = stderr.getvalue()
-        self.assertIn("Error:", err)
-        self.assertIn("--device", err)
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertNotIn("No default tokamak", stderr.getvalue())
 
     def test_env_var_selects_device(self):
         from fdp.environment import _resolve_device_handle

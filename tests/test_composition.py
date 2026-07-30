@@ -152,6 +152,17 @@ class TestCompositionConflict(CatalogFixture):
         env = compose_device_config(active_handles("d3d"))
         self.assertEqual(env["PTDATA_JSON_INDEX_DIR"], _D3D_INDEX)
 
+    def test_cli_renders_conflict_without_traceback(self):
+        import contextlib
+        import io
+        from fdp import cli
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(stderr):
+            cli.main(["env"])
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("PTDATA_JSON_INDEX_DIR", stderr.getvalue())
+
 
 class TestConflictAttribution(CatalogFixture):
     """Three devices, two of which agree: the message must blame the device
