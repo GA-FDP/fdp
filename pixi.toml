@@ -46,6 +46,13 @@ toksearch_mast = "*"
 [tasks]
 build = "pip install -e . --no-deps"
 test = { cmd = "cd tests && ./testit", depends-on = ["build"] }
+# Mock mode: skips the network/token integration tests but still runs
+# everything gated only on a device contributor being installed -- including
+# TestRealCatalogHasNoConflicts, the guard that the real d3d + mast envs never
+# collide. This is the task CI runs so that guard executes in automation; the
+# recipe-based build test cannot (fdp's run deps exclude device packages by
+# design, so it has zero contributors and the guard skips).
+test-mock = { cmd = "cd tests && ./testit --mock", depends-on = ["build"] }
 
 [pypi-dependencies]
 fdp = { path = ".", editable = true }
