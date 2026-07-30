@@ -30,6 +30,15 @@ jobs:
         with:
           pixi-version: latest
 
+      # The pixi dev env (unlike the recipe build's run-deps env) installs the
+      # device contributors toksearch_d3d + toksearch_mast, so this run is the
+      # one place in CI where TestRealCatalogHasNoConflicts actually executes:
+      # it composes the real d3d + mast environments and fails if a future
+      # device introduces a colliding env var. Mock mode skips the
+      # network/token integration tests, so no BEARER_TOKEN is needed.
+      - name: Run unit tests (dev env, mock mode)
+        run: pixi run test-mock
+
       - name: Build Conda package
         run: |
           pixi global install rattler-build

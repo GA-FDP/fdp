@@ -180,6 +180,14 @@ class TestRealCatalogHasNoConflicts(unittest.TestCase):
     This is what makes composition falsifiable rather than an assumption: a
     future device that genuinely collides fails CI instead of silently
     corrupting a user's environment.
+
+    Runs only where a device contributor is installed. In CI that means the
+    `pixi run test-mock` job (fdp's dev env pulls in toksearch_d3d +
+    toksearch_mast); it does NOT run in the recipe-based build test, whose env
+    is provisioned from fdp's run deps and by design contains zero device
+    contributors (device packages depend on fdp, not the reverse). There the
+    guard skips -- so the enforcement lives in the pixi test job, not the
+    package build test.
     """
 
     def test_installed_devices_compose_without_conflict(self):
