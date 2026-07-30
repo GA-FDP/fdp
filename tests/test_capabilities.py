@@ -252,6 +252,24 @@ class TestCapabilityScoping(CatalogFixture):
         with self.assertRaises(ValueError):
             _device_for_ls("pelican://test/fdp-d3d/archives", "mast")
 
+    def test_login_resolves_to_the_only_bearer_device(self):
+        from fdp import cli
+        with mock.patch("fdp.auth.login") as m:
+            m.return_value = None
+            cli.do_login(mock.Mock(device=None, write=False))
+        self.assertEqual(m.call_args[0][0].schema.name, "d3d")
+
+    def test_login_rejects_device_without_bearer_auth(self):
+        import contextlib
+        import io
+        from fdp import cli
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(stderr):
+            cli.do_login(mock.Mock(device="mast", write=False))
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("bearer", stderr.getvalue())
+
 
 class TestLsPelicanShortcutRequiresOrigin(CatalogFixture):
     """The pelican:// URL shortcut in `_device_for_ls` must not bypass the

@@ -23,9 +23,7 @@ from pathlib import Path
 
 from . import auth
 from .catalog import catalog
-from .devices import (
-    active_handles, resolve_for_capability, _resolve_device_handle,
-)
+from .devices import active_handles, resolve_for_capability
 from .environment import (
     compose_device_config, resolve_bearer_token, setup_environment,
 )
@@ -57,7 +55,7 @@ def do_env(args) -> None:
 
 def do_login(args) -> None:
     try:
-        handle = _resolve_device_handle(args.device)
+        handle = resolve_for_capability("bearer", args.device)
         result = auth.login(handle, write=args.write)
     except (ValueError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -79,7 +77,7 @@ def do_login(args) -> None:
 
 def do_logout(args) -> None:
     try:
-        handle = _resolve_device_handle(args.device)
+        handle = resolve_for_capability("bearer", args.device)
     except (ValueError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
