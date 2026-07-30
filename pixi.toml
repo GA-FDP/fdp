@@ -33,6 +33,15 @@ toksearch = ">=2.7.3"
 # Phase 1 catalog migration: fdp.catalog loads tokamak YAMLs validated
 # by fdp-schema. Available on the ga-fdp channel.
 fdp-schema = ">=0.1.2"
+# Dev-env-only: the two device contributors are pulled in solely so
+# tests/test_composition.py::TestRealCatalogHasNoConflicts actually runs
+# (composes the real d3d + mast catalogs) instead of skipping. They are NOT
+# run deps of the released fdp package -- recipe/recipe.yaml deliberately omits
+# them; the split's whole point is that fdp doesn't depend on device packages.
+# Without both present, the design's core safety property (registered devices'
+# envs never collide) is unverified in fdp's own CI.
+toksearch_d3d = "*"
+toksearch_mast = "*"
 
 [tasks]
 build = "pip install -e . --no-deps"
