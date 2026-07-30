@@ -407,6 +407,15 @@ class TestDeviceFlagPlacement(unittest.TestCase):
         args = build_parser().parse_args(["env", "-D", "d3d"])
         self.assertEqual(args.device, "d3d")
 
+    def test_equals_and_attached_forms(self):
+        # `--device=d3d` and `-Dd3d` must resolve identically to the spaced
+        # form; locks these against a future custom argparse action.
+        from fdp.cli import build_parser
+        self.assertEqual(
+            build_parser().parse_args(["env", "--device=d3d"]).device, "d3d")
+        self.assertEqual(
+            build_parser().parse_args(["-Dd3d", "env"]).device, "d3d")
+
     def test_subcommand_flag_wins_over_toplevel(self):
         from fdp.cli import build_parser
         args = build_parser().parse_args(["-D", "mast", "env", "-D", "d3d"])
