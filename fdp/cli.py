@@ -252,11 +252,16 @@ def _add_device_arg(parser, top_level: bool = False) -> None:
     the top-level value. That is what makes both positions work.
     """
     default = None if top_level else argparse.SUPPRESS
+    # The "compose all" note only makes sense at the top level; on a subparser
+    # like `ls`/`login` the flag scopes to a single device, so appending it
+    # there (via the shared helper) would mislead. Keep it top-level only.
+    help_text = ("Device (tokamak) to use for this command. Defaults to "
+                 "$FDP_DEFAULT_DEVICE, then ~/.fdp/config.toml [device].default.")
+    if top_level:
+        help_text += (" Commands that do not need a single device compose "
+                      "all of them.")
     parser.add_argument(
-        "--device", "-D", dest="device", default=default,
-        help="Device (tokamak) to use for this command. Defaults to "
-             "$FDP_DEFAULT_DEVICE, then ~/.fdp/config.toml [device].default. "
-             "Commands that do not need a single device compose all of them.")
+        "--device", "-D", dest="device", default=default, help=help_text)
     parser.add_argument(
         "--default-device", dest="device", default=default,
         help=argparse.SUPPRESS)  # deprecated alias
@@ -276,6 +281,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run",
                             help="Run a command with FDP env applied")
+    # Must precede the REMAINDER positional: argparse's interaction between
+    # REMAINDER and a preceding optional is version-sensitive, and this order
+    # is what lets `fdp run -D d3d echo hi` bind -D to run (not the child).
     _add_device_arg(p_run)
     p_run.add_argument("command_args", nargs=argparse.REMAINDER,
                         help="Command and args to pass through")
