@@ -229,6 +229,54 @@ class TestCapabilityScoping(CatalogFixture):
             self.assertTrue(callable(predicate), name)
             self.assertIsInstance(described, str)
 
+    def test_ls_origin_resolves_without_config(self):
+        from fdp.cli import _resolve_origin_server
+        self.assertEqual(_resolve_origin_server(None),
+                         "root://d3d-origin.example.org:8443")
+
+    def test_ls_origin_rejects_device_without_origin(self):
+        from fdp.cli import _resolve_origin_server
+        with self.assertRaises(ValueError):
+            _resolve_origin_server("mast")
+
+    def test_ls_pelican_url_selects_matching_device(self):
+        from fdp.cli import _device_for_ls
+        handle = _device_for_ls("pelican://test/fdp-d3d/archives", None)
+        self.assertEqual(handle.schema.name, "d3d")
+
+
+class TestLsPelicanShortcutRequiresOrigin(CatalogFixture):
+    """The pelican:// URL shortcut in `_device_for_ls` must not bypass the
+    origin capability check. `pelican_root` and `origin_server` are
+    independent optional fields in fdp_schema -- a device can declare the
+    former without the latter (mast's real catalog entry has neither, but
+    nothing stops a future device from having only `pelican_root`). If the
+    shortcut trusted a pelican_root match alone, `fdp ls` on such a device's
+    URL would resolve to a handle with `origin_server is None` and crash
+    inside `FdpFileSystem(None)` -- the exact bug this task removes for the
+    no-URL case.
+    """
+
+    _NO_ORIGIN_PELICAN_YAML = """\
+schema_version: 1
+name: noorigin
+description: test device with pelican_root but no origin_server
+pelican_root: pelican://test/fdp-noorigin
+locators:
+  - kind: zarr_store
+    name: main
+    protocol: s3
+    base_url: s3://noorigin/shots
+    auth: { kind: none }
+"""
+
+    YAMLS = (("noorigin", _NO_ORIGIN_PELICAN_YAML),)
+
+    def test_pelican_shortcut_does_not_bypass_origin_check(self):
+        from fdp.cli import _device_for_ls
+        with self.assertRaises(ValueError):
+            _device_for_ls("pelican://test/fdp-noorigin/archives", None)
+
 
 class TestDeterministicOrdering(CatalogFixture):
     """Selection output order must be stable so error messages are stable."""
