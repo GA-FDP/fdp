@@ -99,7 +99,7 @@ def do_run(args) -> None:
     sys.exit(result.returncode)
 
 
-def _device_for_ls(path, device_name):
+def _device_for_ls(path: str, device_name: str | None):
     """Resolve the device whose origin server should serve `fdp ls`.
 
     `fdp ls` normally takes a path relative to the origin, so the capability
@@ -126,7 +126,8 @@ def _device_for_ls(path, device_name):
 
 def _resolve_origin_server(device_name: str | None) -> str:
     """Origin server for the resolved tokamak. Kept as a named function
-    because tests and downstream code import it."""
+    because the test suite imports it directly; `do_ls` calls
+    `_device_for_ls` instead (it also needs the path for URL matching)."""
     return _device_for_ls("", device_name).schema.origin_server
 
 
