@@ -28,7 +28,11 @@ from unittest import mock
 
 # Minimal catalog YAML for a fake d3d test tokamak. origin_server is set so
 # that capability-scoped commands (`fdp ls`) have a device to resolve to --
-# the real d3d.yaml always sets it.
+# the real d3d.yaml always sets it. The mds_tree locator declares bearer_token
+# auth for the same reason: `fdp login`/`fdp logout` are capability-scoped to
+# bearer-auth devices, and the real d3d.yaml always sets this too (mirrors
+# tests/test_environment.py::_D3D_TEST_YAML and
+# tests/test_capabilities.py::_D3D_YAML).
 _D3D_TEST_YAML = """\
 schema_version: 1
 name: d3d
@@ -39,6 +43,7 @@ locators:
     name: main
     transport: pelican
     search_path: [pelican://test/fdp-d3d/mds/~t]
+    auth: { kind: bearer_token, env: BEARER_TOKEN }
   - kind: ptdata_indexed
     name: main
     transport: pelican
