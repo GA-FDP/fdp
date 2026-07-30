@@ -23,7 +23,9 @@ from pathlib import Path
 
 from . import auth
 from .catalog import catalog
-from .devices import active_handles, _resolve_device_handle
+from .devices import (
+    active_handles, resolve_for_capability, _resolve_device_handle,
+)
 from .environment import (
     compose_device_config, resolve_bearer_token, setup_environment,
 )
@@ -97,18 +99,39 @@ def do_run(args) -> None:
     sys.exit(result.returncode)
 
 
-def _resolve_origin_server(device_name: str | None) -> str:
-    """Return the origin_server for the resolved tokamak.
+def _device_for_ls(path, device_name):
+    """Resolve the device whose origin server should serve `fdp ls`.
 
-    Delegates to the shared device resolver so `fdp ls` honors the same
-    flag > FDP_DEFAULT_DEVICE > ~/.fdp/config.toml [device].default >
-    single-device resolution order as `fdp env`/`fdp run`.
+    `fdp ls` normally takes a path relative to the origin, so the capability
+    rule ("which devices even have an origin server?") does the real work. A
+    full pelican:// URL that matches exactly one device's pelican_root is
+    honored first as a convenience -- but only when that device also
+    declares an origin server. `pelican_root` and `origin_server` are
+    independent optional fields in fdp_schema, so a device could in
+    principle declare the former without the latter; falling through to the
+    capability check in that case gives a clean error instead of resolving
+    to a device with no origin and crashing inside FdpFileSystem(None).
     """
-    return _resolve_device_handle(device_name).schema.origin_server
+    if device_name is None and str(path).startswith("pelican://"):
+        matches = [
+            catalog[n] for n in catalog.names()
+            if catalog[n].schema.pelican_root
+            and str(path).startswith(catalog[n].schema.pelican_root)
+            and catalog[n].schema.origin_server
+        ]
+        if len(matches) == 1:
+            return matches[0]
+    return resolve_for_capability("origin", device_name)
+
+
+def _resolve_origin_server(device_name: str | None) -> str:
+    """Origin server for the resolved tokamak. Kept as a named function
+    because tests and downstream code import it."""
+    return _device_for_ls("", device_name).schema.origin_server
 
 
 def do_ls(args) -> None:
-    origin = _resolve_origin_server(args.device)
+    origin = _device_for_ls(args.path, args.device).schema.origin_server
     fs = FdpFileSystem(origin)
     listing = fs.ls(args.path, dirs_only=args.dirs_only)
     if listing:

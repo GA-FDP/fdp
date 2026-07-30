@@ -26,11 +26,14 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-# Minimal catalog YAML for a fake d3d test tokamak.
+# Minimal catalog YAML for a fake d3d test tokamak. origin_server is set so
+# that capability-scoped commands (`fdp ls`) have a device to resolve to --
+# the real d3d.yaml always sets it.
 _D3D_TEST_YAML = """\
 schema_version: 1
 name: d3d
 description: DIII-D tokamak (test)
+origin_server: root://d3d-origin.example.org:8443
 locators:
   - kind: mds_tree
     name: main
