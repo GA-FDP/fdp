@@ -21,9 +21,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import auth
+from . import auth, config
 from .catalog import catalog
-from .devices import active_handles, resolve_for_capability
+from .devices import CAPABILITIES, active_handles, resolve_for_capability
 from .environment import (
     compose_device_config, resolve_bearer_token, setup_environment,
 )
@@ -152,6 +152,39 @@ def do_catalog(args) -> None:
         print(yaml.safe_dump(tk.schema.model_dump(), sort_keys=False))
     else:
         raise ValueError(f"Unknown catalog subcommand: {args.subcmd!r}")
+
+
+def do_device(args) -> None:
+    if args.device_command == "list":
+        for name in catalog.names():
+            handle = catalog[name]
+            caps = [cap for cap, (predicate, _) in CAPABILITIES.items()
+                    if predicate(handle)]
+            print(f"{name}\t{handle.description}\t"
+                  f"[{', '.join(caps) if caps else 'none'}]")
+    elif args.device_command == "show":
+        import yaml
+        print(yaml.safe_dump(catalog[args.name].schema.model_dump(),
+                              sort_keys=False))
+    elif args.device_command == "use":
+        if args.clear:
+            config.set_default_device(None)
+            print("Cleared the default device.")
+            return
+        if args.name is None:
+            print("Error: `fdp device use` needs a device name "
+                  "(or --clear).", file=sys.stderr)
+            sys.exit(1)
+        if args.name not in catalog:
+            print(f"Error: unknown device {args.name!r}. Registered: "
+                  f"{', '.join(catalog.names())}", file=sys.stderr)
+            sys.exit(1)
+        config.set_default_device(args.name)
+        print(f"Default device set to '{args.name}' in "
+              f"{config.config_path()}.")
+    else:
+        raise ValueError(
+            f"Unknown device subcommand: {args.device_command!r}")
 
 
 def do_skills(args) -> None:
@@ -312,12 +345,25 @@ def build_parser() -> argparse.ArgumentParser:
                        help="The path whose contents will be listed")
     p_ls.set_defaults(func=do_ls)
 
-    p_cat = sub.add_parser("catalog", help="Inspect the tokamak catalog")
+    p_cat = sub.add_parser("catalog",
+                            help="(deprecated) alias for `fdp device`")
     cat_sub = p_cat.add_subparsers(dest="subcmd", required=True)
     cat_sub.add_parser("list", help="List tokamak names and descriptions")
     show = cat_sub.add_parser("show", help="Print a tokamak's full catalog YAML")
     show.add_argument("name")
     p_cat.set_defaults(func=do_catalog, needs_env=False)
+
+    p_dev = sub.add_parser("device", help="Inspect and select devices")
+    dev_sub = p_dev.add_subparsers(dest="device_command", required=True)
+    dev_sub.add_parser("list", help="List devices and their capabilities")
+    dev_show = dev_sub.add_parser("show", help="Print a device's catalog YAML")
+    dev_show.add_argument("name")
+    dev_use = dev_sub.add_parser(
+        "use", help="Record a default device in ~/.fdp/config.toml")
+    dev_use.add_argument("name", nargs="?", default=None)
+    dev_use.add_argument("--clear", action="store_true",
+                          help="Remove the recorded default device.")
+    p_dev.set_defaults(func=do_device, needs_env=False)
 
     p_sk = sub.add_parser("skills",
                            help="Manage AI assistant skills")
