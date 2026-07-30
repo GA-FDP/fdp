@@ -285,15 +285,15 @@ def _apply_tokens(handles, bearer_token, auto_login) -> None:
     """
     bearers = [h for h in handles if auth.bearer_env(h) is not None]
     single = len(bearers) == 1
+    interactive = auto_login and single
     for handle in bearers:
-        if auto_login and single:
+        if interactive:
             token = auth.ensure_token(handle, explicit=bearer_token)
         else:
             token = auth.get_valid_token(handle, explicit=bearer_token)
         if token is not None:
             os.environ[auth.bearer_env(handle)] = token
-        elif not (auto_login and single) and not os.environ.get(
-                "FDP_NO_AUTO_LOGIN"):
+        elif not interactive and not os.environ.get("FDP_NO_AUTO_LOGIN"):
             suffix = "" if single else f" --device {handle.schema.name}"
             warnings.warn(
                 f"No valid bearer token for device "
