@@ -393,5 +393,49 @@ class TestCliLoginLogout(unittest.TestCase):
                 setup_mock.call_args.kwargs.get("auto_login"), True)
 
 
+class TestDeviceFlagPlacement(unittest.TestCase):
+    """-D must work on either side of the subcommand, and must not leak into
+    the command `fdp run` executes."""
+
+    def test_flag_before_subcommand(self):
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(["-D", "d3d", "env"])
+        self.assertEqual(args.device, "d3d")
+
+    def test_flag_after_subcommand(self):
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(["env", "-D", "d3d"])
+        self.assertEqual(args.device, "d3d")
+
+    def test_subcommand_flag_wins_over_toplevel(self):
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(["-D", "mast", "env", "-D", "d3d"])
+        self.assertEqual(args.device, "d3d")
+
+    def test_absent_flag_is_none(self):
+        from fdp.cli import build_parser
+        self.assertIsNone(build_parser().parse_args(["env"]).device)
+
+    def test_run_flag_after_subcommand_not_passed_to_child(self):
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(
+            ["run", "-D", "d3d", "echo", "hi"])
+        self.assertEqual(args.device, "d3d")
+        self.assertEqual(args.command_args, ["echo", "hi"])
+
+    def test_run_child_args_keep_their_own_flags(self):
+        # A -D belonging to the child command must survive untouched.
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(
+            ["-D", "d3d", "run", "mytool", "-D", "childvalue"])
+        self.assertEqual(args.device, "d3d")
+        self.assertEqual(args.command_args, ["mytool", "-D", "childvalue"])
+
+    def test_deprecated_alias_still_works(self):
+        from fdp.cli import build_parser
+        args = build_parser().parse_args(["--default-device", "d3d", "env"])
+        self.assertEqual(args.device, "d3d")
+
+
 if __name__ == "__main__":
     unittest.main()

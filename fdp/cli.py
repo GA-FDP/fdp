@@ -244,13 +244,29 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         help="Cap on tool-call rounds per turn.")
 
 
+def _add_device_arg(parser, top_level: bool = False) -> None:
+    """Declare --device/-D.
+
+    Subparsers use SUPPRESS as the default so that omitting the flag leaves
+    the top-level value untouched; supplying it on the subparser overwrites
+    the top-level value. That is what makes both positions work.
+    """
+    default = None if top_level else argparse.SUPPRESS
+    parser.add_argument(
+        "--device", "-D", dest="device", default=default,
+        help="Device (tokamak) to use for this command. Defaults to "
+             "$FDP_DEFAULT_DEVICE, then ~/.fdp/config.toml [device].default. "
+             "Commands that do not need a single device compose all of them.")
+    parser.add_argument(
+        "--default-device", dest="device", default=default,
+        help=argparse.SUPPRESS)  # deprecated alias
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="CLI interface for the Fusion Data Platform"
     )
-    parser.add_argument("--device", "-D", "--default-device", dest="device",
-                         default=None,
-                         help="Device (tokamak) to use for this command.")
+    _add_device_arg(parser, top_level=True)
     parser.add_argument("--bearer-token", "-t", default="",
                          help="Override BEARER_TOKEN for this invocation.")
     parser.add_argument("--debug", action="store_true",
@@ -260,25 +276,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run",
                             help="Run a command with FDP env applied")
+    _add_device_arg(p_run)
     p_run.add_argument("command_args", nargs=argparse.REMAINDER,
                         help="Command and args to pass through")
     p_run.set_defaults(func=do_run, auto_login=True)
 
     p_env = sub.add_parser("env",
                             help="Print env vars for shell eval")
+    _add_device_arg(p_env)
     p_env.set_defaults(func=do_env)
 
     p_login = sub.add_parser("login",
                              help="Acquire/refresh a bearer token via pelican")
+    _add_device_arg(p_login)
     p_login.add_argument("--write", action="store_true",
                          help="Request a write-scoped token (default: read).")
     p_login.set_defaults(func=do_login, needs_env=False)
 
     p_logout = sub.add_parser("logout",
                               help="Delete the cached bearer token")
+    _add_device_arg(p_logout)
     p_logout.set_defaults(func=do_logout, needs_env=False)
 
     p_ls = sub.add_parser("ls", help="List files on the FDP")
+    _add_device_arg(p_ls)
     p_ls.add_argument("--dirs-only", "-d", action="store_true",
                        help="Only show subdirectories")
     p_ls.add_argument("path", type=str,
