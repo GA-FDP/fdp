@@ -244,6 +244,14 @@ class TestCapabilityScoping(CatalogFixture):
         handle = _device_for_ls("pelican://test/fdp-d3d/archives", None)
         self.assertEqual(handle.schema.name, "d3d")
 
+    def test_explicit_device_overrides_pelican_url_inference(self):
+        # An explicit -D wins over URL inference: even a d3d URL must not
+        # rescue an explicitly-named origin-less device. Guards the
+        # `device_name is None` gate against a future parser regression.
+        from fdp.cli import _device_for_ls
+        with self.assertRaises(ValueError):
+            _device_for_ls("pelican://test/fdp-d3d/archives", "mast")
+
 
 class TestLsPelicanShortcutRequiresOrigin(CatalogFixture):
     """The pelican:// URL shortcut in `_device_for_ls` must not bypass the
