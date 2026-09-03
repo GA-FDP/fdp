@@ -36,6 +36,41 @@ requirements:
     - pelicanplatform >=7.24.3,<8
     - fdp-schema >=0.2.1
     - toksearch
+    # DELIBERATE AND LOAD-BEARING -- do not remove as an unused dependency.
+    #
+    # graphviz ships `bin/fdp` (a symlink to `dot`, dispatching on argv[0])
+    # and so do we. Anything that pulls graphviz into an FDP environment --
+    # cmflib -> dvc -> pydot -> graphviz, which is the whole CMF provenance
+    # stack -- lands a second owner on `$PREFIX/bin/fdp`. Whichever package
+    # is linked last wins the file, and without this dependency graphviz can
+    # win: `fdp run python ...` then silently becomes a graph layout tool and
+    # the FDP CLI is simply gone. There is no warning to print, because our
+    # entry point is the thing that got replaced.
+    #
+    # Declaring graphviz here makes it our *dependency*, so the installer's
+    # topological link order puts graphviz first and `fdp` last, and we take
+    # the file.
+    #
+    # Which installer you use decides whether this is a fix or an insurance
+    # policy, and both are worth having:
+    #
+    #   pixi/rattler -- graphviz genuinely wins without this dependency; the
+    #     CLI is broken today. With it we win from scratch (3/3 runs), on an
+    #     incremental `pixi add cmflib`, and across a real graphviz
+    #     13.1.2 -> 14.1.2 upgrade. That last case means rattler respects
+    #     existing file ownership, not merely link order.
+    #
+    #   micromamba 2.9.0 -- happens to link `fdp` last even without this
+    #     dependency (graphviz at step 1193, fdp at 1266), so it already
+    #     worked. But nothing *enforced* that order; it was incidental to the
+    #     solve. This dependency makes it guaranteed rather than lucky.
+    #
+    # Nothing is lost on the graphviz side: `dot -Kfdp` is the documented
+    # equivalent of its `fdp` binary.
+    #
+    # The test below is the guard. If it ever fails, this trick has stopped
+    # working and the CLI needs renaming instead.
+    - graphviz
 
 tests:
   - script:
@@ -44,6 +79,33 @@ tests:
     files:
       source:
         - tests/
+
+  # Guard for the graphviz `bin/fdp` collision explained in the run
+  # requirements. graphviz is a run dependency, so this test environment
+  # reproduces the collision for free -- if `fdp` here is graphviz's binary
+  # rather than ours, the CLI is broken for every user with cmflib installed.
+  - script:
+      content:
+        - |
+          set -e
+          echo "bin/fdp resolves to: $(readlink -f "$(command -v fdp)")"
+          # graphviz's fdp answers -V with "fdp - graphviz version ...".
+          if fdp -V 2>&1 | grep -qi "graphviz"; then
+            echo "ERROR: bin/fdp is graphviz's binary, not the FDP CLI."
+            echo "The link-order trick (graphviz as a run dep) has stopped"
+            echo "working. The CLI must be renamed instead. See the comment"
+            echo "beside the graphviz run dependency in recipe.yaml."
+            exit 1
+          fi
+          # Ours must actually work, not merely be present.
+          fdp --help | grep -qE "\brun\b" || {
+            echo "ERROR: 'fdp --help' does not look like the FDP CLI:"; fdp --help | head -5; exit 1; }
+          echo "OK: bin/fdp is the FDP CLI."
+        # The unclobberable fallback: even if bin/fdp is ever lost, this
+        # entry point cannot be taken by another package.
+        - |
+          python -m fdp --help > /dev/null
+          echo "OK: python -m fdp works"
 
 about:
   homepage: https://github.com/GA-FDP/fdp
