@@ -464,7 +464,7 @@ class TestChatQueryEnvironment(unittest.TestCase):
             setup_mock = stack.enter_context(
                 mock.patch.object(cli, "setup_environment"))
             ev = stack.enter_context(
-                mock.patch.object(cli.llm_shims.os, "execvpe"))
+                mock.patch.object(cli.os, "execvpe"))
             with redirect_stdout(io.StringIO()):
                 cli.main()
         setup_mock.assert_called_once()
@@ -480,15 +480,17 @@ class TestChatQueryEnvironment(unittest.TestCase):
             setup_mock = stack.enter_context(
                 mock.patch.object(cli, "setup_environment"))
             ev = stack.enter_context(
-                mock.patch.object(cli.llm_shims.os, "execvpe"))
+                mock.patch.object(cli.os, "execvpe"))
             with redirect_stdout(io.StringIO()):
                 cli.main()
         setup_mock.assert_called_once()
+        self.assertEqual(setup_mock.call_args.kwargs.get("auto_login"), True)
         ev.assert_called_once()
 
     def test_chat_survives_missing_device(self):
         """The fe72baa case: no contributor installed. Warn, then exec."""
         from fdp import cli
+        from fdp.devices import NoDevicesError
         buf = io.StringIO()
         with ExitStack() as stack:
             _patch_catalog(stack)
@@ -496,9 +498,10 @@ class TestChatQueryEnvironment(unittest.TestCase):
                 sys, "argv", ["fdp", "chat"]))
             stack.enter_context(mock.patch.object(
                 cli, "setup_environment",
-                side_effect=ValueError("no device contributors installed")))
+                side_effect=NoDevicesError(
+                    "no device contributors installed")))
             ev = stack.enter_context(
-                mock.patch.object(cli.llm_shims.os, "execvpe"))
+                mock.patch.object(cli.os, "execvpe"))
             stack.enter_context(mock.patch.object(sys, "stderr", buf))
             with redirect_stdout(io.StringIO()):
                 cli.main()
@@ -516,7 +519,7 @@ class TestChatQueryEnvironment(unittest.TestCase):
                 cli, "setup_environment",
                 side_effect=auth.AuthError("token acquisition failed")))
             ev = stack.enter_context(
-                mock.patch.object(cli.llm_shims.os, "execvpe"))
+                mock.patch.object(cli.os, "execvpe"))
             stack.enter_context(mock.patch.object(sys, "stderr", buf))
             with redirect_stdout(io.StringIO()):
                 cli.main()
@@ -539,6 +542,57 @@ class TestChatQueryEnvironment(unittest.TestCase):
                 with self.assertRaises(SystemExit) as cm:
                     cli.main()
         self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Error:", buf.getvalue())
+        self.assertNotIn("Warning", buf.getvalue())
+
+    def test_chat_exits_on_unknown_device(self):
+        """A mistyped --device is not a "no device available here" failure:
+        it is a typo, and the useful answer is a clean error rather than a
+        chat session that silently cannot fetch anything. Runs the real
+        setup_environment so the raise site in devices.py is what is under
+        test. (`chat` does not declare its own --device, so the flag goes
+        before the subcommand.)"""
+        from fdp import cli
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "--device", "nosuch", "chat"]))
+            ev = stack.enter_context(
+                mock.patch.object(cli.os, "execvpe"))
+            stack.enter_context(mock.patch.object(sys, "stderr", buf))
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Unknown device", buf.getvalue())
+        self.assertNotIn("Warning", buf.getvalue())
+        ev.assert_not_called()
+
+    def test_chat_exits_on_device_env_conflict(self):
+        """DeviceEnvConflict subclasses ValueError but is a genuine
+        multi-device disagreement, not an absent device -- it must stay
+        hard for chat too."""
+        from fdp import cli
+        from fdp.environment import DeviceEnvConflict
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat"]))
+            stack.enter_context(mock.patch.object(
+                cli, "setup_environment",
+                side_effect=DeviceEnvConflict("devices disagree on FOO")))
+            ev = stack.enter_context(
+                mock.patch.object(cli.os, "execvpe"))
+            stack.enter_context(mock.patch.object(sys, "stderr", buf))
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("devices disagree on FOO", buf.getvalue())
+        self.assertNotIn("Warning", buf.getvalue())
+        ev.assert_not_called()
 
 
 if __name__ == "__main__":

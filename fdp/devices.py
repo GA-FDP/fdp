@@ -49,6 +49,16 @@ _NO_DEVICES = (
 )
 
 
+class NoDevicesError(ValueError):
+    """No tokamak contributor packages are installed.
+
+    A ValueError subclass so existing `except ValueError` handlers keep
+    working; a distinct type so callers that can reasonably continue
+    without a device -- `fdp chat`/`fdp query` -- can tell this apart
+    from a mistyped --device or a genuine env conflict.
+    """
+
+
 def _listed(names) -> str:
     """Render device/capability names for a message: ``d3d, devb, mast``.
     Interpolating the list itself would leak Python repr punctuation."""
@@ -71,7 +81,8 @@ def explicit_device_name(device: str | None = None) -> str | None:
 
 
 def _registered_names() -> list:
-    """All registered device names, sorted. Raises if none are installed.
+    """All registered device names, sorted. Raises ``NoDevicesError`` if
+    none are installed.
 
     Every entry point into this module funnels through here first, so
     "nothing is installed" always beats "I don't recognize that name" --
@@ -79,7 +90,7 @@ def _registered_names() -> list:
     """
     names = _catalog.names()
     if not names:
-        raise ValueError(_NO_DEVICES)
+        raise NoDevicesError(_NO_DEVICES)
     return names
 
 
