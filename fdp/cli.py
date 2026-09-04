@@ -390,6 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_chat = sub.add_parser("chat",
                               help="Interactive conversational query")
+    _add_device_arg(p_chat)
     _add_llm_args(p_chat)
     p_chat.add_argument("--gui", action="store_true",
                           help="Launch the local Gradio chat GUI "
@@ -407,6 +408,10 @@ def build_parser() -> argparse.ArgumentParser:
                         auto_login=True)
 
     p_query = sub.add_parser("query", help="One-shot query")
+    # Unlike `run`, the positional here is a plain one, not REMAINDER, so it
+    # does not swallow following optionals and the order is free; keep it
+    # matching `run` anyway.
+    _add_device_arg(p_query)
     p_query.add_argument("query", type=str,
                            help="Natural-language query (quote it)")
     _add_llm_args(p_query)
