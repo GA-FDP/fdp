@@ -28,6 +28,7 @@ from .environment import (
     compose_device_config, resolve_bearer_token, setup_environment,
 )
 from .filesystem import FdpFileSystem
+from . import llm_shims
 from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
@@ -390,16 +391,20 @@ def build_parser() -> argparse.ArgumentParser:
                           action="store_false", default=True,
                           help="When --gui is set, do not open a "
                                "browser tab.")
-    # chat / query just execvpe into toksearch.llm.cli; no FDP env
-    # setup needed, and they tolerate no device contributor being
-    # installed (useful for working inside the fdp dev env).
-    p_chat.set_defaults(func=do_chat, needs_env=False)
+    # chat / query want the FDP environment -- the agent fetches shot data --
+    # but must still run where no device contributor is installed (fdp's own
+    # dev env). "best-effort" is that middle state: try, warn, continue.
+    # Setting it up here is safe precisely because these subcommands execvpe
+    # into a fresh process, so libfdpio and XRootD read the vars at load time.
+    p_chat.set_defaults(func=do_chat, needs_env="best-effort",
+                        auto_login=True)
 
     p_query = sub.add_parser("query", help="One-shot query")
     p_query.add_argument("query", type=str,
                            help="Natural-language query (quote it)")
     _add_llm_args(p_query)
-    p_query.set_defaults(func=do_query, needs_env=False)
+    p_query.set_defaults(func=do_query, needs_env="best-effort",
+                         auto_login=True)
 
     p_be = sub.add_parser(
         "backends",
@@ -416,8 +421,12 @@ def main(argv=None) -> None:
 
     # Pure-metadata subcommands (devices, skills, backends) don't touch
     # the FDP env and shouldn't require a device contributor to be
-    # installed, so they opt out via `needs_env=False`.
-    if getattr(args, "needs_env", True):
+    # installed, so they opt out via `needs_env=False`. chat/query use
+    # `needs_env="best-effort"`: they want the env when it is available
+    # but must not die when it isn't.
+    needs_env = getattr(args, "needs_env", True)
+    if needs_env:
+        best_effort = needs_env == "best-effort"
         # Device resolution can fail (e.g. no default chosen among several
         # registered tokamaks); present it as a clean message, not a traceback.
         try:
@@ -427,11 +436,18 @@ def main(argv=None) -> None:
                 auto_login=getattr(args, "auto_login", False),
             )
         except (ValueError, KeyError) as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
+            if not best_effort:
+                print(f"Error: {exc}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Warning: continuing without the FDP environment ({exc}). "
+                  f"Data access will not work in this session.",
+                  file=sys.stderr)
         except auth.AuthError as exc:
-            print(f"Login failed: {exc}", file=sys.stderr)
-            sys.exit(1)
+            if not best_effort:
+                print(f"Login failed: {exc}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Warning: continuing without a bearer token ({exc}).",
+                  file=sys.stderr)
 
     try:
         args.func(args)

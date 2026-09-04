@@ -451,5 +451,95 @@ class TestDeviceFlagPlacement(unittest.TestCase):
         self.assertEqual(args.device, "d3d")
 
 
+class TestChatQueryEnvironment(unittest.TestCase):
+    """chat/query set up the FDP environment when a device is available,
+    and degrade to a warning when none is (fdp's own dev env)."""
+
+    def test_chat_sets_up_environment(self):
+        from fdp import cli
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat"]))
+            setup_mock = stack.enter_context(
+                mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(
+                mock.patch.object(cli.llm_shims.os, "execvpe"))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        setup_mock.assert_called_once()
+        self.assertEqual(setup_mock.call_args.kwargs.get("auto_login"), True)
+        ev.assert_called_once()
+
+    def test_query_sets_up_environment(self):
+        from fdp import cli
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "query", "hello"]))
+            setup_mock = stack.enter_context(
+                mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(
+                mock.patch.object(cli.llm_shims.os, "execvpe"))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        setup_mock.assert_called_once()
+        ev.assert_called_once()
+
+    def test_chat_survives_missing_device(self):
+        """The fe72baa case: no contributor installed. Warn, then exec."""
+        from fdp import cli
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat"]))
+            stack.enter_context(mock.patch.object(
+                cli, "setup_environment",
+                side_effect=ValueError("no device contributors installed")))
+            ev = stack.enter_context(
+                mock.patch.object(cli.llm_shims.os, "execvpe"))
+            stack.enter_context(mock.patch.object(sys, "stderr", buf))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        ev.assert_called_once()
+        self.assertIn("no device contributors installed", buf.getvalue())
+
+    def test_chat_survives_auth_error(self):
+        from fdp import cli, auth
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat"]))
+            stack.enter_context(mock.patch.object(
+                cli, "setup_environment",
+                side_effect=auth.AuthError("token acquisition failed")))
+            ev = stack.enter_context(
+                mock.patch.object(cli.llm_shims.os, "execvpe"))
+            stack.enter_context(mock.patch.object(sys, "stderr", buf))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        ev.assert_called_once()
+        self.assertIn("token acquisition failed", buf.getvalue())
+
+    def test_strict_subcommand_still_exits_on_missing_device(self):
+        """Regression guard: the new branch must not soften `fdp ls`."""
+        from fdp import cli
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "ls", "/"]))
+            stack.enter_context(mock.patch.object(
+                cli, "setup_environment",
+                side_effect=ValueError("no device contributors installed")))
+            stack.enter_context(mock.patch.object(sys, "stderr", buf))
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main()
+        self.assertEqual(cm.exception.code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
