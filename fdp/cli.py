@@ -23,16 +23,23 @@ from pathlib import Path
 
 from . import auth, config
 from .catalog import catalog
-from .devices import CAPABILITIES, active_handles, resolve_for_capability
+from .devices import (
+    CAPABILITIES, NoDevicesError, active_handles, resolve_for_capability,
+)
 from .environment import (
     compose_device_config, resolve_bearer_token, setup_environment,
 )
 from .filesystem import FdpFileSystem
-from . import llm_shims
 from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
+
+# The one non-boolean `needs_env` state: attempt setup, but warn and continue
+# when no device contributor is installed. Named so a typo is a NameError
+# rather than a silent fall-back to strict behaviour (`if needs_env:` treats
+# any truthy value as strict).
+BEST_EFFORT = "best-effort"   # needs_env: True | False | BEST_EFFORT
 
 
 # ----------------------------------------------------------------------
@@ -396,14 +403,14 @@ def build_parser() -> argparse.ArgumentParser:
     # dev env). "best-effort" is that middle state: try, warn, continue.
     # Setting it up here is safe precisely because these subcommands execvpe
     # into a fresh process, so libfdpio and XRootD read the vars at load time.
-    p_chat.set_defaults(func=do_chat, needs_env="best-effort",
+    p_chat.set_defaults(func=do_chat, needs_env=BEST_EFFORT,
                         auto_login=True)
 
     p_query = sub.add_parser("query", help="One-shot query")
     p_query.add_argument("query", type=str,
                            help="Natural-language query (quote it)")
     _add_llm_args(p_query)
-    p_query.set_defaults(func=do_query, needs_env="best-effort",
+    p_query.set_defaults(func=do_query, needs_env=BEST_EFFORT,
                          auto_login=True)
 
     p_be = sub.add_parser(
@@ -426,7 +433,7 @@ def main(argv=None) -> None:
     # but must not die when it isn't.
     needs_env = getattr(args, "needs_env", True)
     if needs_env:
-        best_effort = needs_env == "best-effort"
+        best_effort = needs_env == BEST_EFFORT
         # Device resolution can fail (e.g. no default chosen among several
         # registered tokamaks); present it as a clean message, not a traceback.
         try:
@@ -436,18 +443,27 @@ def main(argv=None) -> None:
                 auto_login=getattr(args, "auto_login", False),
             )
         except (ValueError, KeyError) as exc:
-            if not best_effort:
+            # Only "nothing is installed here" is worth continuing past: it
+            # is the fdp-dev-env case, and the user asked for a chat, not for
+            # data. A mistyped --device or a real DeviceEnvConflict (also a
+            # ValueError) still exits -- degrading there would hand the user
+            # an agent that silently cannot fetch anything.
+            no_device_here = best_effort and isinstance(exc, NoDevicesError)
+            if not no_device_here:
                 print(f"Error: {exc}", file=sys.stderr)
                 sys.exit(1)
-            print(f"Warning: continuing without the FDP environment ({exc}). "
-                  f"Data access will not work in this session.",
-                  file=sys.stderr)
+            else:
+                print("Warning: continuing without the FDP environment. "
+                      f"Data access will not work in this session. ({exc})",
+                      file=sys.stderr)
         except auth.AuthError as exc:
             if not best_effort:
                 print(f"Login failed: {exc}", file=sys.stderr)
                 sys.exit(1)
-            print(f"Warning: continuing without a bearer token ({exc}).",
-                  file=sys.stderr)
+            else:
+                print("Warning: continuing without a bearer token. Data "
+                      "access will not work in this session; run "
+                      f"`fdp login` to fix it. ({exc})", file=sys.stderr)
 
     try:
         args.func(args)
