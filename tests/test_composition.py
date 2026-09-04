@@ -163,6 +163,28 @@ class TestCompositionConflict(CatalogFixture):
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("PTDATA_JSON_INDEX_DIR", stderr.getvalue())
 
+    def test_chat_exits_on_conflict_rather_than_warning(self):
+        """`fdp chat` sets up the environment best-effort: it warns and
+        continues when no device is installed at all. A real conflict between
+        two installed devices is not that case -- it is a choice the user has
+        to make -- so chat must still exit 1. Driven through the real
+        setup_environment rather than an injected exception, so the whole
+        path from two conflicting catalogs to the CLI's decision is covered.
+        """
+        import contextlib
+        import io
+        from unittest import mock
+        from fdp import cli
+        stderr = io.StringIO()
+        with mock.patch.object(cli.os, "execvpe") as ev:
+            with self.assertRaises(SystemExit) as ctx, \
+                    contextlib.redirect_stderr(stderr):
+                cli.main(["chat"])
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("PTDATA_JSON_INDEX_DIR", stderr.getvalue())
+        self.assertNotIn("Warning", stderr.getvalue())
+        ev.assert_not_called()
+
 
 class TestConflictAttribution(CatalogFixture):
     """Three devices, two of which agree: the message must blame the device
