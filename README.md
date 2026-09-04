@@ -16,10 +16,12 @@ contributes `d3d`, `toksearch_mast` contributes `mast`.
 
 Most commands need no device selection:
 
-- `fdp env` / `fdp run` compose the environments of **all** installed devices.
-  Their variables are disjoint, so the union is well-defined. If two devices
-  ever set the same variable to different values, `fdp` reports the conflicting
-  variable and asks you to choose.
+- `fdp env` / `fdp run` / `fdp chat` / `fdp query` compose the environments of
+  **all** installed devices. Their variables are disjoint, so the union is
+  well-defined. If two devices ever set the same variable to different values,
+  `fdp` reports the conflicting variable and asks you to choose. `chat` and
+  `query` differ in one way: with no device installed at all they warn and
+  carry on, since an LLM session that never fetches shot data is still useful.
 - `fdp ls` uses the device that has an origin server.
 - `fdp login` / `fdp logout` use the device that requires a bearer token.
 
