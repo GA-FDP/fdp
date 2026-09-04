@@ -13,19 +13,20 @@
 # limitations under the License.
 """Make the FDP CLI reachable as ``python -m fdp``.
 
-The ``fdp`` console script is not always reachable. Graphviz installs its
-force-directed layout engine at the same path -- ``bin/fdp``, one of the eight
-engines it ships -- and conda has no conflict detection for that: ``conda-meta``
-records graphviz as the owner and graphviz wins. Any environment containing
-``cmflib`` pulls graphviz transitively (cmflib -> dvc -> pydot -> graphviz), so
-in those environments ``fdp run`` silently invokes a graph layout tool.
+Graphviz ships one of its layout engines at ``bin/fdp``, the same path as our
+console script, and conda has no conflict detection for that: whichever
+package links last owns the file. Anything pulling graphviz in transitively
+(cmflib -> dvc -> pydot -> graphviz, i.e. the whole CMF provenance stack)
+could therefore replace the FDP CLI with a graph layout tool.
+
+Since 0.6.0 the recipe declares graphviz as a *run dependency* precisely so
+link order puts us last and bare ``fdp`` keeps working; a packaged test guards
+it. Renaming the console script remains the fallback if that ever stops
+holding, and so far it has not been needed.
 
 ``python -m fdp`` resolves through the installed package rather than ``PATH``,
-so it works regardless. Prefer it in scripts and documentation that must run in
-environments carrying the provenance stack.
-
-See ``docs/2026-09-02-fdp-cli-rename.md`` in the workspace for the full
-analysis; a rename of the console script is planned for a major release.
+so it cannot be shadowed at all. Prefer it in scripts and documentation that
+must run in environments carrying the provenance stack.
 """
 
 import sys

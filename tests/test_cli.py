@@ -571,8 +571,8 @@ class TestChatQueryEnvironment(unittest.TestCase):
         it is a typo, and the useful answer is a clean error rather than a
         chat session that silently cannot fetch anything. Runs the real
         setup_environment so the raise site in devices.py is what is under
-        test. (`chat` does not declare its own --device, so the flag goes
-        before the subcommand.)"""
+        test. Spelled with the flag before the subcommand; the sibling
+        test_chat_device_after_subcommand covers the other position."""
         from fdp import cli
         buf = io.StringIO()
         with ExitStack() as stack:
@@ -589,6 +589,67 @@ class TestChatQueryEnvironment(unittest.TestCase):
         self.assertIn("Unknown device", buf.getvalue())
         self.assertNotIn("Warning", buf.getvalue())
         ev.assert_not_called()
+
+    def test_chat_device_after_subcommand(self):
+        """`fdp chat -D d3d` must work, not just `fdp -D d3d chat`.
+
+        chat/query consume a device now, and an unknown one is a hard exit
+        (test_chat_exits_on_unknown_device), so the flag is load-bearing
+        here. README teaches the post-subcommand spelling for every other
+        subcommand; _add_device_arg's SUPPRESS default is what makes both
+        positions work."""
+        from fdp import cli
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "chat", "--device", "d3d"]))
+            setup_mock = stack.enter_context(
+                mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(
+                mock.patch.object(cli.os, "execvpe"))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        self.assertEqual(setup_mock.call_args.kwargs.get("device"), "d3d")
+        ev.assert_called_once()
+
+    def test_chat_device_before_subcommand_still_works(self):
+        """Regression guard: the top-level spelling is the one that worked
+        before chat declared its own --device, so it must keep working."""
+        from fdp import cli
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "--device", "d3d", "chat"]))
+            setup_mock = stack.enter_context(
+                mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(
+                mock.patch.object(cli.os, "execvpe"))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        self.assertEqual(setup_mock.call_args.kwargs.get("device"), "d3d")
+        ev.assert_called_once()
+
+    def test_query_device_after_subcommand_keeps_the_query(self):
+        """`fdp query -D d3d "hi"` resolves the device *and* still delivers
+        the query. `query`'s positional is a plain one rather than
+        REMAINDER, so a preceding optional cannot swallow it -- assert that
+        rather than trust it, since `run` needed a specific ordering."""
+        from fdp import cli
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "query", "--device", "d3d", "hi"]))
+            setup_mock = stack.enter_context(
+                mock.patch.object(cli, "setup_environment"))
+            ev = stack.enter_context(
+                mock.patch.object(cli.os, "execvpe"))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+        self.assertEqual(setup_mock.call_args.kwargs.get("device"), "d3d")
+        ev.assert_called_once()
+        argv = ev.call_args.args[1]
+        self.assertIn("hi", argv)
+        self.assertNotIn("--device", argv)
 
     def test_chat_exits_on_device_env_conflict(self):
         """DeviceEnvConflict subclasses ValueError but is a genuine
