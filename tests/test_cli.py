@@ -90,15 +90,25 @@ def _make_catalog_ep(name: str, yaml_text: str):
     return ep
 
 
-def _patch_catalog(stack, yaml_text: str = _D3D_TEST_YAML,
-                   name: str = "d3d"):
-    """Patch the catalog entry points and reset the cache."""
+def _patch_entry_points(stack, eps):
+    """Patch the catalog entry points to *eps* and reset the cache."""
     from fdp.catalog import catalog as _cat
-    ep = _make_catalog_ep(name, yaml_text)
     stack.enter_context(mock.patch("fdp.catalog.entry_points",
-                                    return_value=[ep]))
+                                    return_value=eps))
     _cat._cache = None
     stack.callback(lambda: setattr(_cat, "_cache", None))
+
+
+def _patch_catalog(stack, yaml_text: str = _D3D_TEST_YAML,
+                   name: str = "d3d"):
+    """Patch the catalog to a single fake device."""
+    _patch_entry_points(stack, [_make_catalog_ep(name, yaml_text)])
+
+
+def _patch_empty_catalog(stack):
+    """Patch the catalog to no registered devices at all -- fdp's own dev
+    env, where no contributor package is installed."""
+    _patch_entry_points(stack, [])
 
 
 def _run_cli(argv, yaml_text: str = _D3D_TEST_YAML, name: str = "d3d"):
@@ -488,25 +498,36 @@ class TestChatQueryEnvironment(unittest.TestCase):
         ev.assert_called_once()
 
     def test_chat_survives_missing_device(self):
-        """The fe72baa case: no contributor installed. Warn, then exec."""
+        """The fe72baa case: no contributor installed. Warn, then exec.
+
+        Runs the *real* setup_environment against an empty catalog, so the
+        NoDevicesError raise site in devices.py is what is under test. Faking
+        it with a side_effect on a mocked setup_environment would pin nothing
+        about the type actually raised there -- and the type is the whole
+        point, since the message is identical either way.
+
+        Hermetic despite touching the real code path: active_handles() raises
+        out of _registered_names() before explicit_device_name() consults
+        $FDP_DEFAULT_DEVICE or ~/.fdp/config.toml, and before
+        apply_environment() writes anything. The os.environ assertion below
+        holds that second half in place.
+        """
         from fdp import cli
-        from fdp.devices import NoDevicesError
         buf = io.StringIO()
+        before = dict(os.environ)
         with ExitStack() as stack:
-            _patch_catalog(stack)
+            _patch_empty_catalog(stack)
             stack.enter_context(mock.patch.object(
                 sys, "argv", ["fdp", "chat"]))
-            stack.enter_context(mock.patch.object(
-                cli, "setup_environment",
-                side_effect=NoDevicesError(
-                    "no device contributors installed")))
             ev = stack.enter_context(
                 mock.patch.object(cli.os, "execvpe"))
             stack.enter_context(mock.patch.object(sys, "stderr", buf))
             with redirect_stdout(io.StringIO()):
                 cli.main()
         ev.assert_called_once()
-        self.assertIn("no device contributors installed", buf.getvalue())
+        self.assertIn("Warning", buf.getvalue())
+        self.assertIn("No tokamak contributors", buf.getvalue())
+        self.assertEqual(dict(os.environ), before)
 
     def test_chat_survives_auth_error(self):
         from fdp import cli, auth
@@ -572,7 +593,14 @@ class TestChatQueryEnvironment(unittest.TestCase):
     def test_chat_exits_on_device_env_conflict(self):
         """DeviceEnvConflict subclasses ValueError but is a genuine
         multi-device disagreement, not an absent device -- it must stay
-        hard for chat too."""
+        hard for chat too.
+
+        This injects the exception, so it pins the CLI's type dispatch only.
+        The end-to-end version -- two really-conflicting devices composed by
+        the real setup_environment -- lives in test_composition.py, next to
+        the fixtures that produce the conflict (it needs that module's temp
+        $HOME, since with two devices resolution does reach
+        ~/.fdp/config.toml)."""
         from fdp import cli
         from fdp.environment import DeviceEnvConflict
         buf = io.StringIO()

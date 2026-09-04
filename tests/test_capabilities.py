@@ -455,27 +455,33 @@ class TestBadDeviceNames(CatalogFixture):
 
 
 class TestNoDevicesInstalled(CatalogFixture):
-    """A bare fdp env with no contributor packages."""
+    """A bare fdp env with no contributor packages.
+
+    These assert the *type*, not just the message: `fdp chat`/`fdp query`
+    degrade to a warning only for NoDevicesError, so a plain ValueError here
+    would silently turn that degradation back into a hard exit. The message
+    check alone cannot see the difference.
+    """
 
     YAMLS = ()
 
     def test_active_handles_says_install_a_device_package(self):
-        from fdp.devices import active_handles
-        with self.assertRaises(ValueError) as ctx:
+        from fdp.devices import NoDevicesError, active_handles
+        with self.assertRaises(NoDevicesError) as ctx:
             active_handles()
         self.assertIn("No tokamak contributors", str(ctx.exception))
 
     def test_explicit_name_still_says_install_a_device_package(self):
         # Not "unknown device 'd3d'" — nothing is installed at all, and that
         # is the actionable fact.
-        from fdp.devices import _resolve_device_handle
-        with self.assertRaises(ValueError) as ctx:
+        from fdp.devices import NoDevicesError, _resolve_device_handle
+        with self.assertRaises(NoDevicesError) as ctx:
             _resolve_device_handle("d3d")
         self.assertIn("No tokamak contributors", str(ctx.exception))
 
     def test_capability_resolution_says_install_a_device_package(self):
-        from fdp.devices import resolve_for_capability
-        with self.assertRaises(ValueError) as ctx:
+        from fdp.devices import NoDevicesError, resolve_for_capability
+        with self.assertRaises(NoDevicesError) as ctx:
             resolve_for_capability("origin", "d3d")
         self.assertIn("No tokamak contributors", str(ctx.exception))
 
