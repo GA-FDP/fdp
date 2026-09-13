@@ -179,7 +179,18 @@ def _tokamak_env(handle) -> dict[str, str]:
         if c.signals_path:
             out["MAST_CATALOG_SIGNALS_PATH"] = c.signals_path
 
-    # extra_env passes through verbatim.
+    # The per-shot versioned store. catalog/ and views/ sit directly beneath
+    # the device's pelican_root, and a client resolves versions against it --
+    # reading the catalog from where THIS process can reach it, which is not
+    # the same place the origin's own tree paths point to.
+    #
+    # Emitted for any device with a pelican_root, store or not. A device
+    # without one resolves nothing: unpinned reads fall back as before, and a
+    # pinned read refuses rather than inventing an answer.
+    if handle.schema.pelican_root:
+        out["FDP_STORE_ROOT"] = handle.schema.pelican_root
+
+    # extra_env passes through verbatim, so a deployment can point elsewhere.
     out.update(handle.extra_env)
     return out
 
