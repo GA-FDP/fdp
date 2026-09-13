@@ -41,12 +41,19 @@ EXPECTED_D3D_ENV = {
 }
 
 
-@unittest.skipUnless(
+# These need a device package installed to have a "d3d" device at all. The
+# conda build environment has none -- fdp is device-neutral and toksearch_d3d
+# contributes d3d.yaml through an entry point -- so the guard is hoisted here
+# rather than written on one class and forgotten on the next.
+needs_d3d = unittest.skipUnless(
     bool(__import__("importlib.metadata", fromlist=["entry_points"])
          .entry_points(group="fdp_schema.catalogs")),
     "Requires the toksearch_d3d entry point installed in the env "
     "(run from toksearch_d3d's pixi env, not fdp's)",
 )
+
+
+@needs_d3d
 class TestEnvParity(unittest.TestCase):
     def test_d3d_env_matches_captured_fixture(self):
         from fdp.environment import _tokamak_env
@@ -55,6 +62,7 @@ class TestEnvParity(unittest.TestCase):
         self.assertEqual(got, EXPECTED_D3D_ENV)
 
 
+@needs_d3d
 class TestStoreRoot(unittest.TestCase):
     """FDP_STORE_ROOT is where a CLIENT reads the catalog from.
 
