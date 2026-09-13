@@ -29,6 +29,10 @@ EXPECTED_D3D_ENV = {
         "pelican://osg-htc.org:443/fdp-d3d/archives/index/json"
     ),
     "PTDATA_JSON_INDEX_PATTERN": "json_indexes_*",
+    # Added 2026-09-13 (project B5). A client resolves store versions against
+    # this root, which is where IT can read catalog/ -- deliberately not the
+    # filesystem path the origin writes into its own tree paths.
+    "FDP_STORE_ROOT": "pelican://osg-htc.org:443/fdp-d3d",
     "D3DATA": "yes",
     "SYS_D3_DELIM": ";",
     "CAKE_DB_PATH": (
@@ -49,3 +53,53 @@ class TestEnvParity(unittest.TestCase):
         from fdp.catalog import catalog
         got = _tokamak_env(catalog["d3d"])
         self.assertEqual(got, EXPECTED_D3D_ENV)
+
+
+class TestStoreRoot(unittest.TestCase):
+    """FDP_STORE_ROOT is where a CLIENT reads the catalog from.
+
+    It is deliberately not the path an origin writes into its own tree paths:
+    over fdp:// that is the mdsip sandbox's filesystem, which no client can
+    see. Conflating the two makes a client try to list the origin's disk, and
+    the failure mimics success -- pinned reads error, unpinned reads fall back
+    to archives, and nothing resolves at all.
+    """
+
+    def test_a_device_with_a_pelican_root_gets_one(self):
+        from fdp.environment import _tokamak_env
+        from fdp.catalog import catalog
+
+        env = _tokamak_env(catalog["d3d"])
+        self.assertEqual(env["FDP_STORE_ROOT"],
+                         "pelican://osg-htc.org:443/fdp-d3d")
+
+    def test_it_is_a_client_readable_url_not_a_filesystem_path(self):
+        from fdp.environment import _tokamak_env
+        from fdp.catalog import catalog
+
+        root = _tokamak_env(catalog["d3d"])["FDP_STORE_ROOT"]
+        self.assertTrue(root.startswith("pelican://"), root)
+        self.assertFalse(root.startswith("/"), root)
+
+    def test_the_catalog_sits_directly_beneath_it(self):
+        # The resolver appends /catalog and /views, so the root must be the
+        # namespace holding both -- not, say, the archives subtree.
+        from fdp.environment import _tokamak_env
+        from fdp.catalog import catalog
+
+        root = _tokamak_env(catalog["d3d"])["FDP_STORE_ROOT"]
+        self.assertFalse(root.rstrip("/").endswith("archives"), root)
+
+    def test_extra_env_can_override_it(self):
+        # A deployment whose store lives elsewhere must be able to say so
+        # without a new fdp release.
+        from fdp.environment import _tokamak_env
+        from fdp.catalog import catalog
+        from unittest import mock
+
+        handle = catalog["d3d"]
+        with mock.patch.object(type(handle), "extra_env",
+                               new_callable=mock.PropertyMock) as extra:
+            extra.return_value = {"FDP_STORE_ROOT": "pelican://elsewhere/x"}
+            self.assertEqual(_tokamak_env(handle)["FDP_STORE_ROOT"],
+                             "pelican://elsewhere/x")
