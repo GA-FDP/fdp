@@ -158,9 +158,22 @@ def refuse_renamed_spellings(args) -> None:
               "file.".format(value), file=sys.stderr)
         sys.exit(2)
     if value:
-        print("`--snapshot` reads a saved snapshot file, which is not "
-              "implemented yet (B7b). Use `--catalog` to pin a published "
-              "catalog.", file=sys.stderr)
+        # Not "not yet": there is nothing here to build. A saved snapshot
+        # names a VERSION PER SHOT, and an environment variable cannot carry
+        # that to a script that chooses its own shots -- whose list would
+        # win? Exporting only the catalog and the shards would pin the model
+        # trees and leave the measurements floating, which is precisely the
+        # half-pinned run that looks reproducible and is not.
+        #
+        # So the file is read where the shot list is decided, in the script:
+        print("`--snapshot` takes a saved snapshot, which pins a version per "
+              "shot -- more than an environment can carry to a script that "
+              "picks its own shots.\n"
+              "Replay it in the script instead:\n"
+              "    from toksearch import Pipeline\n"
+              "    pipe = Pipeline.from_snapshot({!r})\n"
+              "`fdp run --catalog <stamp>` pins a published catalog for a "
+              "whole command.".format(str(value)), file=sys.stderr)
         sys.exit(2)
 
 
