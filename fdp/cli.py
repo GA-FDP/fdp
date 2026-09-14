@@ -34,7 +34,7 @@ from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
-from . import snapshot as snapshot_mod
+from . import catalog_pin as catalog_mod
 
 # The one non-boolean `needs_env` state: attempt setup, but warn and continue
 # when no device contributor is installed. Named so a typo is a NameError
@@ -50,7 +50,7 @@ BEST_EFFORT = "best-effort"   # needs_env: True | False | BEST_EFFORT
 def do_env(args) -> None:
     handles = active_handles(args.device)
     config = compose_device_config(handles)
-    snapshot_mod.apply_flag(config, getattr(args, "snapshot", None))
+    catalog_mod.apply_flag(config, getattr(args, "catalog", None))
     for key, value in config.items():
         if value is None:
             continue
@@ -97,10 +97,45 @@ def do_logout(args) -> None:
           if removed else "No cached token to remove.")
 
 
+def refuse_renamed_spellings(args) -> None:
+    """Reject the pre-B7b spellings, naming what replaced each.
+
+    Called from main() BEFORE the device environment is composed. These are
+    facts about the argv the user typed, so they must not depend on a device
+    package being installed -- otherwise someone on a bare install is told
+    "no tokamak contributors are installed" when what is actually wrong is
+    that they used last week's flag.
+    """
+    # `fdp catalog list|show <name>` was a deprecated alias for `fdp device`.
+    # The name now belongs to the store's published catalog, so the old form
+    # is refused rather than reinterpreted: a user typing it wants tokamaks.
+    legacy = getattr(args, "legacy", None)
+    if legacy in ("list", "show"):
+        print("`fdp catalog {0}` was the deprecated alias for `fdp device {0}`,"
+              " and `fdp catalog` now shows the store's published catalog.\n"
+              "Use `fdp device {0}` instead.".format(legacy), file=sys.stderr)
+        sys.exit(2)
+
+    # `--snapshot` now names a saved snapshot FILE (B7b), not a catalog.
+    # Taking a stamp would be accepted as a filename later and leave the run
+    # unpinned -- reporting a catalog it never read.
+    value = getattr(args, "snapshot", None)
+    if value and str(value).strip().lower().startswith("catalog_"):
+        print("`--snapshot {}` looks like a published catalog. That is now "
+              "`--catalog`; --snapshot takes the path of a saved snapshot "
+              "file.".format(value), file=sys.stderr)
+        sys.exit(2)
+    if value:
+        print("`--snapshot` reads a saved snapshot file, which is not "
+              "implemented yet (B7b). Use `--catalog` to pin a published "
+              "catalog.", file=sys.stderr)
+        sys.exit(2)
+
+
 def do_run(args) -> None:
     # setup_environment has already composed the device env into os.environ,
     # so the store root is in there and subprocess.run passes the lot down.
-    snapshot_mod.apply_flag(os.environ, getattr(args, "snapshot", None))
+    catalog_mod.apply_flag(os.environ, getattr(args, "catalog", None))
 
     passthrough = args.command_args
     if args.debug:
@@ -112,9 +147,9 @@ def do_run(args) -> None:
     sys.exit(result.returncode)
 
 
-def do_snapshot(args) -> None:
+def do_catalog_cmd(args) -> None:
     if not args.list:
-        print(snapshot_mod.describe(os.environ))
+        print(catalog_mod.describe(os.environ))
         return
 
     root = os.environ.get("FDP_STORE_ROOT", "")
@@ -124,9 +159,9 @@ def do_snapshot(args) -> None:
 
     # Listed through the origin the way `fdp ls` does, rather than through
     # ptdata: the resolver answers "which is newest", not "which exist".
-    path = snapshot_mod.catalog_path(root)
+    path = catalog_mod.catalog_path(root)
     fs = FdpFileSystem(_resolve_origin_server(args.device))
-    names = snapshot_mod.order_snapshots(fs.ls(path, dirs_only=True))
+    names = catalog_mod.order_catalogs(fs.ls(path, dirs_only=True))
     if not names:
         print("no catalog snapshots under {}".format(path))
         sys.exit(1)
@@ -312,12 +347,16 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         help="Cap on tool-call rounds per turn.")
 
 
-def _add_snapshot_arg(parser) -> None:
+def _add_catalog_arg(parser) -> None:
     parser.add_argument(
-        "--snapshot", default=None, metavar="STAMP",
-        help="Pin to a catalog snapshot, so every store read resolves "
+        "--catalog", default=None, metavar="STAMP",
+        help="Pin to a published catalog, so every store read resolves "
              "through it. 'latest' resolves one now and writes down the "
              "answer -- what is exported is always a concrete stamp.")
+    # Survives the rename meaning something else (a saved snapshot file,
+    # B7b). Accepting a stamp here would silently leave the run unpinned.
+    parser.add_argument(
+        "--snapshot", default=None, metavar="FILE", help=argparse.SUPPRESS)
 
 
 def _add_device_arg(parser, top_level: bool = False) -> None:
@@ -361,7 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     # REMAINDER and a preceding optional is version-sensitive, and this order
     # is what lets `fdp run -D d3d echo hi` bind -D to run (not the child).
     _add_device_arg(p_run)
-    _add_snapshot_arg(p_run)
+    _add_catalog_arg(p_run)
     p_run.add_argument("command_args", nargs=argparse.REMAINDER,
                         help="Command and args to pass through")
     p_run.set_defaults(func=do_run, auto_login=True)
@@ -369,15 +408,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_env = sub.add_parser("env",
                             help="Print env vars for shell eval")
     _add_device_arg(p_env)
-    _add_snapshot_arg(p_env)
+    _add_catalog_arg(p_env)
     p_env.set_defaults(func=do_env)
 
-    p_snap = sub.add_parser("snapshot",
-                            help="Show the catalog snapshot a run would use")
-    _add_device_arg(p_snap)
-    p_snap.add_argument("--list", action="store_true",
-                        help="List available snapshots, newest first.")
-    p_snap.set_defaults(func=do_snapshot)
+    p_cat = sub.add_parser("catalog",
+                           help="Show the published catalog a run would use")
+    _add_device_arg(p_cat)
+    p_cat.add_argument("--list", action="store_true",
+                       help="List available catalogs, newest first.")
+    # The retired `fdp catalog list|show` alias for `fdp device`. Positional
+    # rather than silently ignored: a user typing the old form must be told,
+    # not shown something else entirely.
+    p_cat.add_argument("legacy", nargs="?", default=None,
+                       help=argparse.SUPPRESS)
+    p_cat.add_argument("legacy_arg", nargs="?", default=None,
+                       help=argparse.SUPPRESS)
+    p_cat.set_defaults(func=do_catalog_cmd)
 
     p_login = sub.add_parser("login",
                              help="Acquire/refresh a bearer token via pelican")
@@ -398,14 +444,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("path", type=str,
                        help="The path whose contents will be listed")
     p_ls.set_defaults(func=do_ls)
-
-    p_cat = sub.add_parser("catalog",
-                            help="(deprecated) alias for `fdp device`")
-    cat_sub = p_cat.add_subparsers(dest="subcmd", required=True)
-    cat_sub.add_parser("list", help="List tokamak names and descriptions")
-    show = cat_sub.add_parser("show", help="Print a tokamak's full catalog YAML")
-    show.add_argument("name")
-    p_cat.set_defaults(func=do_catalog, needs_env=False)
 
     p_dev = sub.add_parser("device", help="Inspect and select devices")
     dev_sub = p_dev.add_subparsers(dest="device_command", required=True)
@@ -482,6 +520,8 @@ def main(argv=None) -> None:
     # installed, so they opt out via `needs_env=False`. chat/query use
     # `needs_env="best-effort"`: they want the env when it is available
     # but must not die when it isn't.
+    refuse_renamed_spellings(args)
+
     needs_env = getattr(args, "needs_env", True)
     if needs_env:
         best_effort = needs_env == BEST_EFFORT

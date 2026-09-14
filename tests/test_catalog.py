@@ -166,7 +166,7 @@ class TestCatalogCli(unittest.TestCase):
         from contextlib import redirect_stdout
         from fdp.cli import main as cli_main
         with redirect_stdout(StringIO()) as buf:
-            cli_main(["catalog", "list"])
+            cli_main(["device", "list"])
         output = buf.getvalue()
         self.assertIn("d3d", output)
         self.assertIn("DIII-D", output)
@@ -181,7 +181,7 @@ class TestCatalogCli(unittest.TestCase):
         from contextlib import redirect_stdout
         from fdp.cli import main as cli_main
         with redirect_stdout(StringIO()) as buf:
-            cli_main(["catalog", "show", "d3d"])
+            cli_main(["device", "show", "d3d"])
         output = buf.getvalue()
         self.assertIn("mds_tree", output)
         self.assertIn("ptdata_indexed", output)

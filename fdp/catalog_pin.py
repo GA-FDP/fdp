@@ -11,22 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""`--snapshot`: pinning a command to one catalog snapshot.
+"""`--catalog`: pinning a command to one published catalog.
 
-The versioned store keeps every version of a shot, and a catalog snapshot
-records which version was latest at one moment. "Latest" is therefore a
+The versioned store keeps every version of a shot, and a published
+catalog records which version was latest at one moment. "Latest" is therefore a
 lookup that moves, so a long run can read its early shots from one snapshot
 and its later ones from the next. Naming one makes a run reproducible, and
-`fdp run --snapshot` is the form that needs nothing of the script it wraps.
+`fdp run --catalog` is the form that needs nothing of the script it wraps.
 
-The value reaches the command as `FDP_STORE_SNAPSHOT` — an environment
+The value reaches the command as `FDP_STORE_CATALOG` — an environment
 variable because it has to survive `fork`, `spawn` and a worker on another
 host, which no argument does.
 """
 
 import sys
 
-VAR = "FDP_STORE_SNAPSHOT"
+VAR = "FDP_STORE_CATALOG"
 LATEST = "latest"
 
 
@@ -42,14 +42,14 @@ def _newest(store_root: str) -> str:
         from ptdata import StoreIndex
     except ImportError as exc:
         sys.exit(
-            "--snapshot latest needs ptdata >= 2.8.0 to resolve one ({}). "
+            "--catalog latest needs ptdata >= 2.8.0 to resolve one ({}). "
             "Either install it, or pass a snapshot by name.".format(exc)
         )
     return StoreIndex(store_root).current_snapshot
 
 
 def is_latest(value) -> bool:
-    """Whether `value` is the word rather than a snapshot.
+    """Whether `value` is the word rather than a catalog.
 
     Compared case-insensitively after stripping, because it arrives from a
     command line and `Latest` reaching a store as a literal snapshot name
@@ -59,7 +59,7 @@ def is_latest(value) -> bool:
 
 
 def resolve_flag(value, store_root: str = "") -> str:
-    """Turn a `--snapshot` value into a concrete stamp.
+    """Turn a `--catalog` value into a concrete stamp.
 
     A name passes through **unverified**. Verifying it would duplicate a
     catalog read the first resolution performs anyway, and an unsatisfiable
@@ -76,7 +76,7 @@ def resolve_flag(value, store_root: str = "") -> str:
 
     if not store_root:
         sys.exit(
-            "--snapshot latest needs a store to resolve against, and this "
+            "--catalog latest needs a store to resolve against, and this "
             "device declares none (no FDP_STORE_ROOT). Name a snapshot "
             "explicitly, or drop --snapshot."
         )
@@ -84,7 +84,7 @@ def resolve_flag(value, store_root: str = "") -> str:
     resolved = _newest(store_root)
     if not resolved:
         sys.exit(
-            "--snapshot latest found no catalog snapshot under {}. Check the "
+            "--catalog latest found no catalog snapshot under {}. Check the "
             "store root, or name a snapshot explicitly.".format(store_root)
         )
     return resolved
@@ -93,8 +93,8 @@ def resolve_flag(value, store_root: str = "") -> str:
 def apply_flag(env: dict, value, store_root: str = "") -> dict:
     """Put the resolved pin into `env`, in place. Returns it.
 
-    A `--snapshot` the user did not pass leaves the environment alone,
-    including any `FDP_STORE_SNAPSHOT` they exported themselves.
+    A `--catalog` the user did not pass leaves the environment alone,
+    including any `FDP_STORE_CATALOG` they exported themselves.
     """
     if value:
         env[VAR] = resolve_flag(value, store_root or env.get("FDP_STORE_ROOT", ""))
@@ -116,8 +116,8 @@ def catalog_path(store_root: str) -> str:
     return rest.rstrip("/") + "/catalog"
 
 
-def order_snapshots(names) -> list:
-    """Snapshot names from a catalog listing, newest first.
+def order_catalogs(names) -> list:
+    """Catalog names from the catalog directory, newest first.
 
     Names are `catalog_<ISO-ish UTC stamp>`, for which lexical order IS
     chronological order -- the same property the resolver relies on to pick
@@ -133,7 +133,7 @@ def order_snapshots(names) -> list:
 
 
 def describe(env: dict) -> str:
-    """One line saying which snapshot a command would read from."""
+    """One line saying which catalog a command would read from."""
     pinned = env.get(VAR, "")
     if pinned:
         return "{} (pinned by {})".format(pinned, VAR)
@@ -144,7 +144,7 @@ def describe(env: dict) -> str:
 
     resolved = _newest(root)
     if not resolved:
-        return "no catalog snapshot found under {}".format(root)
+        return "no catalog found under {}".format(root)
     # Named as what it WOULD be, not as what it is: nothing is pinned, so a
     # run starting a moment later could legitimately resolve a newer one.
     return "{} (newest; a run would resolve and hold this)".format(resolved)
