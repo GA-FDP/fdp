@@ -14,6 +14,7 @@
 """fdp CLI entrypoint."""
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -35,6 +36,7 @@ from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 from . import catalog_pin as catalog_mod
+from . import saved_snapshot as snap_mod
 
 # The one non-boolean `needs_env` state: attempt setup, but warn and continue
 # when no device contributor is installed. Named so a typo is a NameError
@@ -167,6 +169,66 @@ def do_catalog_cmd(args) -> None:
         sys.exit(1)
     for name in names:
         print(name)
+
+
+def do_snapshot(args) -> None:
+    if args.snapshot_command == "save":
+        shots = snap_mod.parse_shots(args.shot)
+        root = os.environ.get("FDP_STORE_ROOT", "")
+        if not root:
+            sys.exit("this device declares no versioned store "
+                     "(no FDP_STORE_ROOT), so there is nothing to snapshot.")
+        catalog = catalog_mod.resolve_flag(args.catalog or "latest", root)
+        shards = list(args.shard or [])
+        shards += snap_mod.shards_for(args.tree or [], shots)
+        ptdata = snap_mod._ptdata()
+        try:
+            doc = ptdata.build_snapshot(root, shots=shots,
+                                        shards=sorted(set(shards)),
+                                        catalog=catalog)
+        except Exception as exc:
+            # A snapshot that quietly omits a shot misrepresents what a run
+            # read, so build_snapshot refuses rather than shortens. Relay
+            # that plainly instead of a traceback.
+            sys.exit("cannot build the snapshot: {}".format(exc))
+        with open(args.output, "w") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print("{}  {} shots, {} shards".format(
+            args.output, len(doc["shots"]), len(doc["shared"])))
+        print("token {}".format(ptdata.snapshot_token(doc)))
+        return
+
+    if args.snapshot_command == "show":
+        snap_mod.show(snap_mod.load(args.path))
+        return
+
+    if args.snapshot_command == "extract":
+        doc = snap_mod.extract(args.path)
+        with open(args.output, "w") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print("{}  token {}".format(args.output, snap_mod._token(doc)))
+        return
+
+    if args.snapshot_command == "verify":
+        doc = snap_mod.load(args.path)
+        ptdata = snap_mod._ptdata()
+        result = ptdata.verify_snapshot(doc, sample=args.sample)
+        for kind, key, expected, actual in result.failures:
+            print("FAIL  {} {}: expected {} got {}".format(
+                kind, key, expected, actual), file=sys.stderr)
+        scope = ("{} of {} (SAMPLED)".format(result.checked, result.total)
+                 if result.sampled else "all {}".format(result.total))
+        if result.ok:
+            print("OK  {} entries verified against their bytes".format(scope))
+            if result.sampled:
+                print("    A sample is a weaker claim: the rest is unchecked.")
+        else:
+            print("FAILED  {} entries checked, {} did not match".format(
+                scope, len(result.failures)), file=sys.stderr)
+            sys.exit(1)
+        return
 
 
 def _device_for_ls(path: str, device_name: str | None):
@@ -424,6 +486,45 @@ def build_parser() -> argparse.ArgumentParser:
     p_cat.add_argument("legacy_arg", nargs="?", default=None,
                        help=argparse.SUPPRESS)
     p_cat.set_defaults(func=do_catalog_cmd)
+
+    p_snap = sub.add_parser(
+        "snapshot", help="Save, inspect and verify a citable shot list")
+    _add_device_arg(p_snap)
+    snap_sub = p_snap.add_subparsers(dest="snapshot_command", required=True)
+
+    sv = snap_sub.add_parser("save", help="Write a saved snapshot")
+    sv.add_argument("--catalog", default=None, metavar="STAMP",
+                    help="Which published catalog decides the versions "
+                         "('latest' resolves one now).")
+    sv.add_argument("--shot", required=True, metavar="LIST",
+                    help="Shots: '1,2,3', '1-5', or '@file' (one per line; "
+                         "blank lines and # comments ignored).")
+    sv.add_argument("--tree", action="append", metavar="NAME",
+                    help="Record the shard behind this MDSplus tree. Repeat "
+                         "for several. Naming your trees is what lets the "
+                         "citation outlive the catalog.")
+    sv.add_argument("--shard", action="append", metavar="NAME",
+                    help="Record this shard by name, if you know it.")
+    sv.add_argument("-o", "--output", required=True, metavar="FILE")
+    sv.set_defaults(func=do_snapshot)
+
+    sh = snap_sub.add_parser("show", help="What a snapshot names")
+    sh.add_argument("path")
+    sh.set_defaults(func=do_snapshot, needs_env=False)
+
+    vf = snap_sub.add_parser("verify", help="Re-fetch and check the bytes")
+    vf.add_argument("path")
+    vf.add_argument("--sample", type=int, default=None, metavar="N",
+                    help="Check N entries chosen at random. Downloads every "
+                         "version directory it checks, so a full run is an "
+                         "occasional deliberate act.")
+    vf.set_defaults(func=do_snapshot)
+
+    ex = snap_sub.add_parser("extract",
+                             help="Lift the snapshot out of a run's inputs.json")
+    ex.add_argument("path")
+    ex.add_argument("-o", "--output", required=True, metavar="FILE")
+    ex.set_defaults(func=do_snapshot, needs_env=False)
 
     p_login = sub.add_parser("login",
                              help="Acquire/refresh a bearer token via pelican")
