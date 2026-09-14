@@ -48,7 +48,6 @@ BEST_EFFORT = "best-effort"   # needs_env: True | False | BEST_EFFORT
 # ----------------------------------------------------------------------
 
 def do_env(args) -> None:
-    _refuse_renamed_snapshot(args)
     handles = active_handles(args.device)
     config = compose_device_config(handles)
     catalog_mod.apply_flag(config, getattr(args, "catalog", None))
@@ -98,12 +97,28 @@ def do_logout(args) -> None:
           if removed else "No cached token to remove.")
 
 
-def _refuse_renamed_snapshot(args) -> None:
-    """`--snapshot` now names a saved snapshot FILE (B7b), not a catalog.
+def refuse_renamed_spellings(args) -> None:
+    """Reject the pre-B7b spellings, naming what replaced each.
 
-    Taking a stamp here would be accepted as a filename later and leave the
-    run unpinned -- reporting a catalog it never read.
+    Called from main() BEFORE the device environment is composed. These are
+    facts about the argv the user typed, so they must not depend on a device
+    package being installed -- otherwise someone on a bare install is told
+    "no tokamak contributors are installed" when what is actually wrong is
+    that they used last week's flag.
     """
+    # `fdp catalog list|show <name>` was a deprecated alias for `fdp device`.
+    # The name now belongs to the store's published catalog, so the old form
+    # is refused rather than reinterpreted: a user typing it wants tokamaks.
+    legacy = getattr(args, "legacy", None)
+    if legacy in ("list", "show"):
+        print("`fdp catalog {0}` was the deprecated alias for `fdp device {0}`,"
+              " and `fdp catalog` now shows the store's published catalog.\n"
+              "Use `fdp device {0}` instead.".format(legacy), file=sys.stderr)
+        sys.exit(2)
+
+    # `--snapshot` now names a saved snapshot FILE (B7b), not a catalog.
+    # Taking a stamp would be accepted as a filename later and leave the run
+    # unpinned -- reporting a catalog it never read.
     value = getattr(args, "snapshot", None)
     if value and str(value).strip().lower().startswith("catalog_"):
         print("`--snapshot {}` looks like a published catalog. That is now "
@@ -118,7 +133,6 @@ def _refuse_renamed_snapshot(args) -> None:
 
 
 def do_run(args) -> None:
-    _refuse_renamed_snapshot(args)
     # setup_environment has already composed the device env into os.environ,
     # so the store root is in there and subprocess.run passes the lot down.
     catalog_mod.apply_flag(os.environ, getattr(args, "catalog", None))
@@ -134,16 +148,6 @@ def do_run(args) -> None:
 
 
 def do_catalog_cmd(args) -> None:
-    # `fdp catalog list|show <name>` used to be a deprecated alias for
-    # `fdp device`. The name now belongs to the store's published catalog,
-    # so the old form is refused by name rather than reinterpreted.
-    if args.legacy in ("list", "show"):
-        print("`fdp catalog {0}` was the deprecated alias for `fdp device {0}`,"
-              " and `fdp catalog` now shows the store's published catalog.\n"
-              "Use `fdp device {0}` instead.".format(args.legacy),
-              file=sys.stderr)
-        sys.exit(2)
-
     if not args.list:
         print(catalog_mod.describe(os.environ))
         return
@@ -516,6 +520,8 @@ def main(argv=None) -> None:
     # installed, so they opt out via `needs_env=False`. chat/query use
     # `needs_env="best-effort"`: they want the env when it is available
     # but must not die when it isn't.
+    refuse_renamed_spellings(args)
+
     needs_env = getattr(args, "needs_env", True)
     if needs_env:
         best_effort = needs_env == BEST_EFFORT
