@@ -99,6 +99,36 @@ def do_logout(args) -> None:
           if removed else "No cached token to remove.")
 
 
+#: Set in the child so a re-exec cannot recurse. Not a public interface.
+_ENV_APPLIED = "_FDP_ENV_APPLIED"
+
+
+def _reexec_with_composed_env(args) -> None:
+    """Restart once, with the composed environment already in place.
+
+    Some subcommands read the versioned store **in this process**. That
+    cannot work when the environment is composed in Python: libXrdCl and
+    libfdpio read XRD_PLUGINCONFDIR and BEARER_TOKEN in their static
+    initialisers, which have already run by the time `setup_environment`
+    assigns to `os.environ`. The variables are then present and have no
+    effect -- `fdp catalog` reported "no catalog found" against a perfectly
+    healthy store.
+
+    `fdp run` never had the problem: it spawns a child, and a child starts
+    with the whole environment. This gives the in-process subcommands the
+    same footing by becoming that child.
+
+    Marked rather than counted, so a failure to apply the environment cannot
+    turn into an exec loop.
+    """
+    if os.environ.get(_ENV_APPLIED) or not getattr(args, "reads_store", False):
+        return
+    os.environ[_ENV_APPLIED] = "1"
+    os.execve(sys.executable,
+              [sys.executable, "-m", "fdp"] + sys.argv[1:],
+              os.environ)
+
+
 def refuse_renamed_spellings(args) -> None:
     """Reject the pre-B7b spellings, naming what replaced each.
 
@@ -190,12 +220,19 @@ def do_snapshot(args) -> None:
             # A snapshot that quietly omits a shot misrepresents what a run
             # read, so build_snapshot refuses rather than shortens. Relay
             # that plainly instead of a traceback.
-            sys.exit("cannot build the snapshot: {}".format(exc))
+            sys.exit("cannot build the snapshot: {}".format(
+                str(exc).replace("StoreMiss.", "").rstrip()))
         with open(args.output, "w") as fh:
             json.dump(doc, fh, indent=2, sort_keys=True)
             fh.write("\n")
-        print("{}  {} shots, {} shards".format(
-            args.output, len(doc["shots"]), len(doc["shared"])))
+        n_shots, n_shards = len(doc["shots"]), len(doc["shared"])
+        print("{}  {} shot{}, {} shard{}".format(
+            args.output, n_shots, "" if n_shots == 1 else "s",
+            n_shards, "" if n_shards == 1 else "s"))
+        if not n_shards:
+            print("    No shards named. Model trees will resolve through "
+                  "catalog {}, so this citation lasts only as long as that "
+                  "catalog does -- pass --tree to pin them.".format(catalog))
         print("token {}".format(ptdata.snapshot_token(doc)))
         return
 
@@ -485,7 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help=argparse.SUPPRESS)
     p_cat.add_argument("legacy_arg", nargs="?", default=None,
                        help=argparse.SUPPRESS)
-    p_cat.set_defaults(func=do_catalog_cmd)
+    p_cat.set_defaults(func=do_catalog_cmd, reads_store=True)
 
     p_snap = sub.add_parser(
         "snapshot", help="Save, inspect and verify a citable shot list")
@@ -506,7 +543,7 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--shard", action="append", metavar="NAME",
                     help="Record this shard by name, if you know it.")
     sv.add_argument("-o", "--output", required=True, metavar="FILE")
-    sv.set_defaults(func=do_snapshot)
+    sv.set_defaults(func=do_snapshot, reads_store=True)
 
     sh = snap_sub.add_parser("show", help="What a snapshot names")
     sh.add_argument("path")
@@ -518,7 +555,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Check N entries chosen at random. Downloads every "
                          "version directory it checks, so a full run is an "
                          "occasional deliberate act.")
-    vf.set_defaults(func=do_snapshot)
+    vf.set_defaults(func=do_snapshot, reads_store=True)
 
     ex = snap_sub.add_parser("extract",
                              help="Lift the snapshot out of a run's inputs.json")
@@ -634,6 +671,7 @@ def main(argv=None) -> None:
                 bearer_token=args.bearer_token or None,
                 auto_login=getattr(args, "auto_login", False),
             )
+            _reexec_with_composed_env(args)
         except (ValueError, KeyError) as exc:
             # Only "nothing is installed here" is worth continuing past: it
             # is the fdp-dev-env case, and the user asked for a chat, not for

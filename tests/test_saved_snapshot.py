@@ -143,3 +143,50 @@ class TestShow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestItRestartsWithTheComposedEnvironment(unittest.TestCase):
+    """Some subcommands read the store in THIS process, and that cannot work
+    when the environment is composed in Python: libXrdCl and libfdpio read
+    XRD_PLUGINCONFDIR and BEARER_TOKEN in their static initialisers, long
+    before `setup_environment` assigns to os.environ. `fdp catalog` reported
+    "no catalog found" against a healthy store because of it."""
+
+    def _args(self, **kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(**kw)
+
+    def test_a_store_reading_subcommand_restarts(self):
+        from fdp import cli
+        with mock.patch.object(cli.os, "execve") as execve, \
+             mock.patch.dict(cli.os.environ, {}, clear=False):
+            cli.os.environ.pop(cli._ENV_APPLIED, None)
+            cli._reexec_with_composed_env(self._args(reads_store=True))
+        self.assertTrue(execve.called)
+
+    def test_a_subcommand_that_reads_no_store_does_not(self):
+        from fdp import cli
+        with mock.patch.object(cli.os, "execve") as execve:
+            cli._reexec_with_composed_env(self._args(reads_store=False))
+        self.assertFalse(execve.called)
+
+    def test_the_child_does_not_restart_again(self):
+        # Marked rather than counted: a failure to apply the environment
+        # must not become an exec loop.
+        from fdp import cli
+        with mock.patch.object(cli.os, "execve") as execve, \
+             mock.patch.dict(cli.os.environ, {cli._ENV_APPLIED: "1"}):
+            cli._reexec_with_composed_env(self._args(reads_store=True))
+        self.assertFalse(execve.called)
+
+    def test_the_marked_subcommands_are_the_ones_that_read_the_store(self):
+        from fdp.cli import build_parser
+        p = build_parser()
+        for argv in (["catalog"], ["snapshot", "save", "--shot", "1", "-o", "f"],
+                     ["snapshot", "verify", "f"]):
+            with self.subTest(argv=argv):
+                self.assertTrue(getattr(p.parse_args(argv), "reads_store", False))
+        for argv in (["snapshot", "show", "f"], ["ls", "/"],
+                     ["snapshot", "extract", "i", "-o", "f"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(getattr(p.parse_args(argv), "reads_store", False))
