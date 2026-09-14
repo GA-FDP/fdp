@@ -217,8 +217,15 @@ class TestCliLs(unittest.TestCase):
         fake_fs.ls.assert_called_once_with("/some/path", dirs_only=False)
 
 
-class TestCliCatalog(unittest.TestCase):
-    """Tests for the 'fdp catalog' subcommands."""
+class TestCliDeviceListing(unittest.TestCase):
+    """Tests for device listing.
+
+    These exercised `fdp catalog list|show`, a deprecated alias for
+    `fdp device`. B7b retired the alias and gave the name to the store's
+    published catalog, so they target `fdp device` -- the form that was
+    always the documented one. The retirement itself is asserted in
+    tests/test_catalog_pin.py.
+    """
 
     _CATALOG_YAML = """\
 schema_version: 1
@@ -257,7 +264,7 @@ extra_env: {D3DATA: /d3d/data}
         ep = self._make_mock_ep()
         mock_catalog = _Catalog()
         with ExitStack() as stack:
-            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "list"]))
+            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "device", "list"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
             stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
             stack.enter_context(mock.patch.object(cli, "catalog", mock_catalog))
@@ -277,7 +284,7 @@ extra_env: {D3DATA: /d3d/data}
         ep = self._make_mock_ep()
         mock_catalog = _Catalog()
         with ExitStack() as stack:
-            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "catalog", "show", "d3d"]))
+            stack.enter_context(mock.patch.object(sys, "argv", ["fdp", "device", "show", "d3d"]))
             stack.enter_context(mock.patch.object(cli, "setup_environment"))
             stack.enter_context(mock.patch("fdp.catalog.entry_points", return_value=[ep]))
             stack.enter_context(mock.patch.object(cli, "catalog", mock_catalog))
