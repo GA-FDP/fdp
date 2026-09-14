@@ -34,6 +34,7 @@ from .llm_shims import do_backends as _llm_do_backends
 from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
+from . import snapshot as snapshot_mod
 
 # The one non-boolean `needs_env` state: attempt setup, but warn and continue
 # when no device contributor is installed. Named so a typo is a NameError
@@ -48,7 +49,9 @@ BEST_EFFORT = "best-effort"   # needs_env: True | False | BEST_EFFORT
 
 def do_env(args) -> None:
     handles = active_handles(args.device)
-    for key, value in compose_device_config(handles).items():
+    config = compose_device_config(handles)
+    snapshot_mod.apply_flag(config, getattr(args, "snapshot", None))
+    for key, value in config.items():
         if value is None:
             continue
         print(f"export {key}={shlex.quote(str(value))}")
@@ -95,6 +98,10 @@ def do_logout(args) -> None:
 
 
 def do_run(args) -> None:
+    # setup_environment has already composed the device env into os.environ,
+    # so the store root is in there and subprocess.run passes the lot down.
+    snapshot_mod.apply_flag(os.environ, getattr(args, "snapshot", None))
+
     passthrough = args.command_args
     if args.debug:
         print(f"Running: {' '.join(passthrough)}")
@@ -103,6 +110,28 @@ def do_run(args) -> None:
             print(f"  {k}={v}")
     result = subprocess.run(passthrough, env=os.environ)
     sys.exit(result.returncode)
+
+
+def do_snapshot(args) -> None:
+    if not args.list:
+        print(snapshot_mod.describe(os.environ))
+        return
+
+    root = os.environ.get("FDP_STORE_ROOT", "")
+    if not root:
+        print("no versioned store configured for this device")
+        return
+
+    # Listed through the origin the way `fdp ls` does, rather than through
+    # ptdata: the resolver answers "which is newest", not "which exist".
+    path = snapshot_mod.catalog_path(root)
+    fs = FdpFileSystem(_resolve_origin_server(args.device))
+    names = snapshot_mod.order_snapshots(fs.ls(path, dirs_only=True))
+    if not names:
+        print("no catalog snapshots under {}".format(path))
+        sys.exit(1)
+    for name in names:
+        print(name)
 
 
 def _device_for_ls(path: str, device_name: str | None):
@@ -283,6 +312,14 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         help="Cap on tool-call rounds per turn.")
 
 
+def _add_snapshot_arg(parser) -> None:
+    parser.add_argument(
+        "--snapshot", default=None, metavar="STAMP",
+        help="Pin to a catalog snapshot, so every store read resolves "
+             "through it. 'latest' resolves one now and writes down the "
+             "answer -- what is exported is always a concrete stamp.")
+
+
 def _add_device_arg(parser, top_level: bool = False) -> None:
     """Declare --device/-D.
 
@@ -324,6 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
     # REMAINDER and a preceding optional is version-sensitive, and this order
     # is what lets `fdp run -D d3d echo hi` bind -D to run (not the child).
     _add_device_arg(p_run)
+    _add_snapshot_arg(p_run)
     p_run.add_argument("command_args", nargs=argparse.REMAINDER,
                         help="Command and args to pass through")
     p_run.set_defaults(func=do_run, auto_login=True)
@@ -331,7 +369,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_env = sub.add_parser("env",
                             help="Print env vars for shell eval")
     _add_device_arg(p_env)
+    _add_snapshot_arg(p_env)
     p_env.set_defaults(func=do_env)
+
+    p_snap = sub.add_parser("snapshot",
+                            help="Show the catalog snapshot a run would use")
+    _add_device_arg(p_snap)
+    p_snap.add_argument("--list", action="store_true",
+                        help="List available snapshots, newest first.")
+    p_snap.set_defaults(func=do_snapshot)
 
     p_login = sub.add_parser("login",
                              help="Acquire/refresh a bearer token via pelican")
