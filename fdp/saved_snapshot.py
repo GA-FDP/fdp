@@ -98,6 +98,23 @@ def parse_shots(value):
     return sorted(set(shots))
 
 
+def parse_names(values):
+    """Tree or shard names from repeated flags, commas, or both.
+
+    `--shot` takes `1,2,3`, so a user types `--tree bci,efit01` next. Without
+    this that was one tree named "bci,efit01", and the failure named a shard
+    called `bci,efit01-0` -- which reads as a gap in the store rather than a
+    comma that was not split.
+    """
+    out = []
+    for value in values or ():
+        for name in str(value).split(","):
+            name = name.strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
 def shards_for(trees, shots):
     """One shard per (tree, million-shot span), sorted.
 

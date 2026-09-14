@@ -82,6 +82,40 @@ class TestTreesBecomeShards(unittest.TestCase):
         self.assertEqual(ss.shards_for([], [165920]), [])
 
 
+class TestNameLists(unittest.TestCase):
+    """`--tree bci,efit01` is what a user types after `--shot 1,2,3`.
+
+    Before this, --tree only repeated, so a comma produced one tree called
+    "bci,efit01" and the run failed naming a shard called `bci,efit01-0` --
+    which reads as a hole in the store rather than a typo.
+    """
+
+    def test_a_comma_separates_names(self):
+        self.assertEqual(ss.parse_names(["bci,efit01"]), ["bci", "efit01"])
+
+    def test_repeating_the_flag_still_works(self):
+        self.assertEqual(ss.parse_names(["bci", "efit01"]), ["bci", "efit01"])
+
+    def test_the_two_forms_mix(self):
+        self.assertEqual(ss.parse_names(["bci,efit01", "transp"]),
+                         ["bci", "efit01", "transp"])
+
+    def test_blanks_and_spacing_are_forgiven(self):
+        self.assertEqual(ss.parse_names([" bci , ,efit01 "]),
+                         ["bci", "efit01"])
+
+    def test_order_is_kept_and_repeats_dropped(self):
+        # Order is the user's, not sorted: the message that reports what was
+        # recorded should read back the way they typed it. build_snapshot
+        # sorts the shards itself, so nothing downstream depends on this.
+        self.assertEqual(ss.parse_names(["efit01,bci,efit01"]),
+                         ["efit01", "bci"])
+
+    def test_nothing_given_is_nothing(self):
+        self.assertEqual(ss.parse_names(None), [])
+        self.assertEqual(ss.parse_names([]), [])
+
+
 class TestExtract(unittest.TestCase):
     def test_it_lifts_the_snapshot_out_of_an_inputs_file(self):
         inputs = {"source": {}, "signals": {}, "device": "d3d",

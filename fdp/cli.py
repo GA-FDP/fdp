@@ -222,8 +222,8 @@ def do_snapshot(args) -> None:
             sys.exit("this device declares no versioned store "
                      "(no FDP_STORE_ROOT), so there is nothing to snapshot.")
         catalog = catalog_mod.resolve_flag(args.catalog or "latest", root)
-        shards = list(args.shard or [])
-        shards += snap_mod.shards_for(args.tree or [], shots)
+        shards = snap_mod.parse_names(args.shard)
+        shards += snap_mod.shards_for(snap_mod.parse_names(args.tree), shots)
         ptdata = snap_mod._ptdata()
         try:
             doc = ptdata.build_snapshot(root, shots=shots,
@@ -550,11 +550,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Shots: '1,2,3', '1-5', or '@file' (one per line; "
                          "blank lines and # comments ignored).")
     sv.add_argument("--tree", action="append", metavar="NAME",
-                    help="Record the shard behind this MDSplus tree. Repeat "
-                         "for several. Naming your trees is what lets the "
-                         "citation outlive the catalog.")
+                    help="Record the shard behind this MDSplus tree. "
+                         "Comma-separate or repeat for several. Naming your "
+                         "trees is what lets the citation outlive the "
+                         "catalog.")
     sv.add_argument("--shard", action="append", metavar="NAME",
-                    help="Record this shard by name, if you know it.")
+                    help="Record this shard by name, if you know it. "
+                         "Comma-separate or repeat for several.")
     sv.add_argument("-o", "--output", required=True, metavar="FILE")
     sv.set_defaults(func=do_snapshot, reads_store=True)
 
