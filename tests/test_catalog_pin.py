@@ -158,11 +158,24 @@ class TestTheOldSpellingsAreRefused(unittest.TestCase):
         self.assertIn("looks like a published catalog", err)
         self.assertIn("catalog_20260907T232802Z", err)
 
-    def test_run_snapshot_with_a_path_says_it_is_not_implemented(self):
+    def test_run_snapshot_with_a_path_points_at_from_snapshot(self):
+        # A saved snapshot pins a version per shot. `fdp run` composes an
+        # environment for a command that chooses its own shots, so it has
+        # nowhere to put that mapping -- the refusal has to hand the user
+        # the call that does work, or they are simply stuck.
         code, err = self._run(["run", "--snapshot", "./mine.json", "true"])
         self.assertNotEqual(code, 0)
-        self.assertIn("not implemented", err)
+        self.assertIn("Pipeline.from_snapshot", err)
+        self.assertIn("./mine.json", err)
         self.assertNotIn("looks like a published catalog", err)
+
+    def test_the_refusal_does_not_promise_a_later_release(self):
+        # "not implemented yet" invites a user to wait for a flag that is
+        # never coming, and invites a maintainer to build the third
+        # resolution path B7b spec section 5 exists to rule out.
+        _, err = self._run(["run", "--snapshot", "./mine.json", "true"])
+        self.assertNotIn("not implemented", err)
+        self.assertNotIn("yet", err)
 
     def test_fdp_catalog_list_names_fdp_device(self):
         code, err = self._run(["catalog", "list"])

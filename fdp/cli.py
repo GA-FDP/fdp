@@ -14,6 +14,7 @@
 """fdp CLI entrypoint."""
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -35,6 +36,7 @@ from .llm_shims import do_chat as _llm_do_chat
 from .llm_shims import do_query as _llm_do_query
 from .skills import BACKENDS, _parse_skill_md, discover_skill_dirs
 from . import catalog_pin as catalog_mod
+from . import saved_snapshot as snap_mod
 
 # The one non-boolean `needs_env` state: attempt setup, but warn and continue
 # when no device contributor is installed. Named so a typo is a NameError
@@ -97,6 +99,36 @@ def do_logout(args) -> None:
           if removed else "No cached token to remove.")
 
 
+#: Set in the child so a re-exec cannot recurse. Not a public interface.
+_ENV_APPLIED = "_FDP_ENV_APPLIED"
+
+
+def _reexec_with_composed_env(args) -> None:
+    """Restart once, with the composed environment already in place.
+
+    Some subcommands read the versioned store **in this process**. That
+    cannot work when the environment is composed in Python: libXrdCl and
+    libfdpio read XRD_PLUGINCONFDIR and BEARER_TOKEN in their static
+    initialisers, which have already run by the time `setup_environment`
+    assigns to `os.environ`. The variables are then present and have no
+    effect -- `fdp catalog` reported "no catalog found" against a perfectly
+    healthy store.
+
+    `fdp run` never had the problem: it spawns a child, and a child starts
+    with the whole environment. This gives the in-process subcommands the
+    same footing by becoming that child.
+
+    Marked rather than counted, so a failure to apply the environment cannot
+    turn into an exec loop.
+    """
+    if os.environ.get(_ENV_APPLIED) or not getattr(args, "reads_store", False):
+        return
+    os.environ[_ENV_APPLIED] = "1"
+    os.execve(sys.executable,
+              [sys.executable, "-m", "fdp"] + sys.argv[1:],
+              os.environ)
+
+
 def refuse_renamed_spellings(args) -> None:
     """Reject the pre-B7b spellings, naming what replaced each.
 
@@ -126,9 +158,22 @@ def refuse_renamed_spellings(args) -> None:
               "file.".format(value), file=sys.stderr)
         sys.exit(2)
     if value:
-        print("`--snapshot` reads a saved snapshot file, which is not "
-              "implemented yet (B7b). Use `--catalog` to pin a published "
-              "catalog.", file=sys.stderr)
+        # Not "not yet": there is nothing here to build. A saved snapshot
+        # names a VERSION PER SHOT, and an environment variable cannot carry
+        # that to a script that chooses its own shots -- whose list would
+        # win? Exporting only the catalog and the shards would pin the model
+        # trees and leave the measurements floating, which is precisely the
+        # half-pinned run that looks reproducible and is not.
+        #
+        # So the file is read where the shot list is decided, in the script:
+        print("`--snapshot` takes a saved snapshot, which pins a version per "
+              "shot -- more than an environment can carry to a script that "
+              "picks its own shots.\n"
+              "Replay it in the script instead:\n"
+              "    from toksearch import Pipeline\n"
+              "    pipe = Pipeline.from_snapshot({!r})\n"
+              "`fdp run --catalog <stamp>` pins a published catalog for a "
+              "whole command.".format(str(value)), file=sys.stderr)
         sys.exit(2)
 
 
@@ -167,6 +212,73 @@ def do_catalog_cmd(args) -> None:
         sys.exit(1)
     for name in names:
         print(name)
+
+
+def do_snapshot(args) -> None:
+    if args.snapshot_command == "save":
+        shots = snap_mod.parse_shots(args.shot)
+        root = os.environ.get("FDP_STORE_ROOT", "")
+        if not root:
+            sys.exit("this device declares no versioned store "
+                     "(no FDP_STORE_ROOT), so there is nothing to snapshot.")
+        catalog = catalog_mod.resolve_flag(args.catalog or "latest", root)
+        shards = snap_mod.parse_names(args.shard)
+        shards += snap_mod.shards_for(snap_mod.parse_names(args.tree), shots)
+        ptdata = snap_mod._ptdata()
+        try:
+            doc = ptdata.build_snapshot(root, shots=shots,
+                                        shards=sorted(set(shards)),
+                                        catalog=catalog)
+        except Exception as exc:
+            # A snapshot that quietly omits a shot misrepresents what a run
+            # read, so build_snapshot refuses rather than shortens. Relay
+            # that plainly instead of a traceback.
+            sys.exit("cannot build the snapshot: {}".format(
+                str(exc).replace("StoreMiss.", "").rstrip()))
+        with open(args.output, "w") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        n_shots, n_shards = len(doc["shots"]), len(doc["shared"])
+        print("{}  {} shot{}, {} shard{}".format(
+            args.output, n_shots, "" if n_shots == 1 else "s",
+            n_shards, "" if n_shards == 1 else "s"))
+        if not n_shards:
+            print("    No shards named. Model trees will resolve through "
+                  "catalog {}, so this citation lasts only as long as that "
+                  "catalog does -- pass --tree to pin them.".format(catalog))
+        print("token {}".format(ptdata.snapshot_token(doc)))
+        return
+
+    if args.snapshot_command == "show":
+        snap_mod.show(snap_mod.load(args.path))
+        return
+
+    if args.snapshot_command == "extract":
+        doc = snap_mod.extract(args.path)
+        with open(args.output, "w") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print("{}  token {}".format(args.output, snap_mod._token(doc)))
+        return
+
+    if args.snapshot_command == "verify":
+        doc = snap_mod.load(args.path)
+        ptdata = snap_mod._ptdata()
+        result = ptdata.verify_snapshot(doc, sample=args.sample)
+        for kind, key, expected, actual in result.failures:
+            print("FAIL  {} {}: expected {} got {}".format(
+                kind, key, expected, actual), file=sys.stderr)
+        scope = ("{} of {} (SAMPLED)".format(result.checked, result.total)
+                 if result.sampled else "all {}".format(result.total))
+        if result.ok:
+            print("OK  {} entries verified against their bytes".format(scope))
+            if result.sampled:
+                print("    A sample is a weaker claim: the rest is unchecked.")
+        else:
+            print("FAILED  {} entries checked, {} did not match".format(
+                scope, len(result.failures)), file=sys.stderr)
+            sys.exit(1)
+        return
 
 
 def _device_for_ls(path: str, device_name: str | None):
@@ -423,7 +535,48 @@ def build_parser() -> argparse.ArgumentParser:
                        help=argparse.SUPPRESS)
     p_cat.add_argument("legacy_arg", nargs="?", default=None,
                        help=argparse.SUPPRESS)
-    p_cat.set_defaults(func=do_catalog_cmd)
+    p_cat.set_defaults(func=do_catalog_cmd, reads_store=True)
+
+    p_snap = sub.add_parser(
+        "snapshot", help="Save, inspect and verify a citable shot list")
+    _add_device_arg(p_snap)
+    snap_sub = p_snap.add_subparsers(dest="snapshot_command", required=True)
+
+    sv = snap_sub.add_parser("save", help="Write a saved snapshot")
+    sv.add_argument("--catalog", default=None, metavar="STAMP",
+                    help="Which published catalog decides the versions "
+                         "('latest' resolves one now).")
+    sv.add_argument("--shot", required=True, metavar="LIST",
+                    help="Shots: '1,2,3', '1-5', or '@file' (one per line; "
+                         "blank lines and # comments ignored).")
+    sv.add_argument("--tree", action="append", metavar="NAME",
+                    help="Record the shard behind this MDSplus tree. "
+                         "Comma-separate or repeat for several. Naming your "
+                         "trees is what lets the citation outlive the "
+                         "catalog.")
+    sv.add_argument("--shard", action="append", metavar="NAME",
+                    help="Record this shard by name, if you know it. "
+                         "Comma-separate or repeat for several.")
+    sv.add_argument("-o", "--output", required=True, metavar="FILE")
+    sv.set_defaults(func=do_snapshot, reads_store=True)
+
+    sh = snap_sub.add_parser("show", help="What a snapshot names")
+    sh.add_argument("path")
+    sh.set_defaults(func=do_snapshot, needs_env=False)
+
+    vf = snap_sub.add_parser("verify", help="Re-fetch and check the bytes")
+    vf.add_argument("path")
+    vf.add_argument("--sample", type=int, default=None, metavar="N",
+                    help="Check N entries chosen at random. Downloads every "
+                         "version directory it checks, so a full run is an "
+                         "occasional deliberate act.")
+    vf.set_defaults(func=do_snapshot, reads_store=True)
+
+    ex = snap_sub.add_parser("extract",
+                             help="Lift the snapshot out of a run's inputs.json")
+    ex.add_argument("path")
+    ex.add_argument("-o", "--output", required=True, metavar="FILE")
+    ex.set_defaults(func=do_snapshot, needs_env=False)
 
     p_login = sub.add_parser("login",
                              help="Acquire/refresh a bearer token via pelican")
@@ -533,6 +686,7 @@ def main(argv=None) -> None:
                 bearer_token=args.bearer_token or None,
                 auto_login=getattr(args, "auto_login", False),
             )
+            _reexec_with_composed_env(args)
         except (ValueError, KeyError) as exc:
             # Only "nothing is installed here" is worth continuing past: it
             # is the fdp-dev-env case, and the user asked for a chat, not for
