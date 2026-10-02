@@ -32,6 +32,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def decode_exp(token: str) -> "int | None":
@@ -264,6 +265,33 @@ def _run_in_pty(cmd) -> "_PtyResult":
         output=b"".join(chunks).decode("utf-8", errors="replace"))
 
 
+def _run_pelican(cmd) -> "_PtyResult":
+    try:
+        return _run_in_pty(cmd)
+    except OSError as exc:
+        raise AuthError(f"failed to invoke pelican: {exc}")
+
+
+# The OAuth error code an issuer returns for a client id it has no record of.
+# pelican keeps reusing the registration it stored and never recovers, so a
+# reset or replaced issuer leaves every earlier user unable to log in.
+_UNKNOWN_CLIENT = '"invalid_client"'
+
+
+def _drop_client_registration(pelican: str, pelican_root: str) -> None:
+    """Forget pelican's stored OAuth client for this device's namespace, and
+    nothing else: the same credential file holds other devices' logins."""
+    prefix = urlparse(pelican_root).path.rstrip("/")
+    sys.stderr.write(
+        f"fdp: the issuer no longer recognises the stored login for {prefix}; "
+        "registering again.\n")
+    cmd = [pelican, "credentials", "prefix", "delete", prefix]
+    if _run_pelican(cmd).returncode != 0:
+        raise AuthError(
+            "could not remove the stale login; run "
+            f"`pelican credentials prefix delete {prefix}` and retry")
+
+
 def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
     """Run the pelican OAuth flow and return the raw JWT.
 
@@ -279,10 +307,10 @@ def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
     scope = "write" if write else "read"
     cmd = [pelican, "credentials", "token", "get", scope, pelican_root,
            "--json"]
-    try:
-        result = _run_in_pty(cmd)
-    except OSError as exc:
-        raise AuthError(f"failed to invoke pelican: {exc}")
+    result = _run_pelican(cmd)
+    if result.returncode != 0 and _UNKNOWN_CLIENT in result.output:
+        _drop_client_registration(pelican, pelican_root)
+        result = _run_pelican(cmd)
     if result.returncode != 0:
         raise AuthError(
             f"pelican token request failed (exit {result.returncode})")
