@@ -260,7 +260,7 @@ class TestCapabilityScoping(CatalogFixture):
         # argparse.Namespace (not mock.Mock) is a strict double: it raises
         # AttributeError if do_login reads an unexpected arg, rather than
         # silently auto-vivifying a child mock.
-        args = argparse.Namespace(device=None, write=False)
+        args = argparse.Namespace(device=None, write=False, fresh=False)
         with mock.patch("fdp.auth.login") as m, \
                 contextlib.redirect_stdout(io.StringIO()):
             m.return_value = None

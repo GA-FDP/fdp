@@ -19,6 +19,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def do_env(args) -> None:
 def do_login(args) -> None:
     try:
         handle = resolve_for_capability("bearer", args.device)
-        result = auth.login(handle, write=args.write)
+        result = auth.login(handle, write=args.write, fresh=args.fresh)
     except (ValueError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -82,6 +83,8 @@ def do_login(args) -> None:
     if result.exp:
         when = datetime.fromtimestamp(
             result.exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        left = auth.format_remaining(result.exp - time.time())
+        when = f"{when} ({left} left)"
     else:
         when = "unknown"
     print(f"Logged in to {result.device} ({result.scope}); "
@@ -583,6 +586,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_device_arg(p_login)
     p_login.add_argument("--write", action="store_true",
                          help="Request a write-scoped token (default: read).")
+    p_login.add_argument(
+        "--fresh", action="store_true",
+        help="Discard the stored login and consent again, for a token with "
+             "its full lifetime. Without this, the stored token is returned "
+             "for as long as it is valid, however little time it has left.")
     p_login.set_defaults(func=do_login, needs_env=False)
 
     p_logout = sub.add_parser("logout",
