@@ -234,6 +234,107 @@ class TestLoginLogout(unittest.TestCase):
         self.assertFalse(auth.logout(_bearer_handle()))
 
 
+# Verbatim from pelican 7.24.3 against an issuer that no longer knows the
+# client id stored in ~/.config/pelican/credentials (2026-10-01, after the
+# d3d origin's issuer was replaced).
+_UNKNOWN_CLIENT = (
+    "Failed to get a token: Failed to perform device code flow with URL "
+    "https://origin:8000/api/v1.0/issuer/ns/fdp-d3d/device_authorization: "
+    "oauth2: cannot fetch token: 401 Unauthorized\r\n"
+    'Response: {"error":"invalid_client","error_description":"Unknown client"}'
+    "\r\n")
+
+
+class _FakePelican:
+    """Stands in for _run_in_pty: answers `token get` from a script of
+    results, and records every argv it is given."""
+
+    def __init__(self, token_get_results, delete_returncode=0):
+        self._token_get = list(token_get_results)
+        self._delete_returncode = delete_returncode
+        self.calls = []
+
+    def __call__(self, cmd):
+        self.calls.append(cmd)
+        if cmd[1:4] == ["credentials", "prefix", "delete"]:
+            return auth._PtyResult(returncode=self._delete_returncode,
+                                   output="")
+        return self._token_get.pop(0)
+
+    def deletes(self):
+        return [c for c in self.calls
+                if c[1:4] == ["credentials", "prefix", "delete"]]
+
+    def token_gets(self):
+        return [c for c in self.calls
+                if c[1:4] == ["credentials", "token", "get"]]
+
+
+class TestStaleClientRegistration(unittest.TestCase):
+    """The issuer forgets a client (its state was reset or replaced) while
+    pelican still holds the old registration. pelican does not recover by
+    itself, so login must drop that one registration and try again."""
+
+    def _login(self, fake):
+        with mock.patch.object(auth.shutil, "which",
+                               return_value="/bin/pelican"), \
+             mock.patch.object(auth, "_run_in_pty", side_effect=fake):
+            return auth._pelican_get_token("pelican://host:443/fdp-d3d")
+
+    def test_unknown_client_is_dropped_and_login_retried(self):
+        token = _make_jwt(3600)
+        fake = _FakePelican([
+            auth._PtyResult(returncode=1, output=_UNKNOWN_CLIENT),
+            auth._PtyResult(returncode=0, output=token),
+        ])
+        self.assertEqual(self._login(fake), token)
+        self.assertEqual(
+            fake.deletes(),
+            [["/bin/pelican", "credentials", "prefix", "delete", "/fdp-d3d"]])
+        self.assertEqual(len(fake.token_gets()), 2)
+
+    def test_only_the_devices_own_prefix_is_dropped(self):
+        fake = _FakePelican([
+            auth._PtyResult(returncode=1, output=_UNKNOWN_CLIENT),
+            auth._PtyResult(returncode=0, output=_make_jwt(3600)),
+        ])
+        with mock.patch.object(auth.shutil, "which",
+                               return_value="/bin/pelican"), \
+             mock.patch.object(auth, "_run_in_pty", side_effect=fake):
+            auth._pelican_get_token("pelican://host:443/fdp-cmod/")
+        self.assertEqual(fake.deletes()[0][4], "/fdp-cmod")
+
+    def test_retries_once_then_gives_up(self):
+        fake = _FakePelican([
+            auth._PtyResult(returncode=1, output=_UNKNOWN_CLIENT),
+            auth._PtyResult(returncode=1, output=_UNKNOWN_CLIENT),
+        ])
+        with self.assertRaises(auth.AuthError):
+            self._login(fake)
+        self.assertEqual(len(fake.deletes()), 1)
+        self.assertEqual(len(fake.token_gets()), 2)
+
+    def test_other_failures_leave_credentials_alone(self):
+        fake = _FakePelican([
+            auth._PtyResult(returncode=1,
+                            output="Failed to get a token: connection refused"),
+        ])
+        with self.assertRaises(auth.AuthError):
+            self._login(fake)
+        self.assertEqual(fake.deletes(), [])
+        self.assertEqual(len(fake.token_gets()), 1)
+
+    def test_failed_drop_names_the_manual_command(self):
+        fake = _FakePelican(
+            [auth._PtyResult(returncode=1, output=_UNKNOWN_CLIENT)],
+            delete_returncode=1)
+        with self.assertRaises(auth.AuthError) as ctx:
+            self._login(fake)
+        self.assertIn("pelican credentials prefix delete /fdp-d3d",
+                      str(ctx.exception))
+        self.assertEqual(len(fake.token_gets()), 1)
+
+
 class TestExtractToken(unittest.TestCase):
     def test_json_access_token(self):
         self.assertEqual(
