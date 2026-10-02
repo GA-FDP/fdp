@@ -335,6 +335,134 @@ class TestStaleClientRegistration(unittest.TestCase):
         self.assertEqual(len(fake.token_gets()), 1)
 
 
+class TestFreshLogin(unittest.TestCase):
+    """pelican hands back its stored token until that token expires, so the
+    only way to a full-lifetime token before then is to drop the stored
+    login and consent again."""
+
+    def _get(self, fake, **kwargs):
+        with mock.patch.object(auth.shutil, "which",
+                               return_value="/bin/pelican"), \
+             mock.patch.object(auth, "_run_in_pty", side_effect=fake):
+            return auth._pelican_get_token("pelican://host:443/fdp-d3d",
+                                           **kwargs)
+
+    def test_fresh_drops_the_stored_login_before_requesting(self):
+        token = _make_jwt(86400)
+        fake = _FakePelican([auth._PtyResult(returncode=0, output=token)])
+        self.assertEqual(self._get(fake, fresh=True), token)
+        self.assertEqual(
+            [c[1:4] for c in fake.calls],
+            [["credentials", "prefix", "delete"],
+             ["credentials", "token", "get"]])
+        self.assertEqual(fake.deletes()[0][4], "/fdp-d3d")
+
+    def test_fresh_requests_nothing_when_the_drop_fails(self):
+        fake = _FakePelican([], delete_returncode=1)
+        with self.assertRaises(auth.AuthError):
+            self._get(fake, fresh=True)
+        self.assertEqual(fake.token_gets(), [])
+
+    def test_plain_login_keeps_the_stored_login(self):
+        fake = _FakePelican(
+            [auth._PtyResult(returncode=0, output=_make_jwt(3600))])
+        self._get(fake)
+        self.assertEqual(fake.deletes(), [])
+
+    def test_login_passes_fresh_through(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        fake = _FakePelican(
+            [auth._PtyResult(returncode=0, output=_make_jwt(86400))])
+        with mock.patch.object(Path, "home", return_value=Path(td.name)), \
+             mock.patch.object(auth.shutil, "which",
+                               return_value="/bin/pelican"), \
+             mock.patch.object(auth, "_run_in_pty", side_effect=fake):
+            auth.login(_bearer_handle(pelican_root="pelican://h:443/fdp-d3d"),
+                       fresh=True)
+        self.assertEqual(len(fake.deletes()), 1)
+
+
+class TestFormatRemaining(unittest.TestCase):
+    def test_hours_and_minutes(self):
+        self.assertEqual(auth.format_remaining(2 * 3600 + 38 * 60 + 12),
+                         "2 h 38 min")
+
+    def test_under_an_hour(self):
+        self.assertEqual(auth.format_remaining(38 * 60 + 59), "38 min")
+
+    def test_days(self):
+        self.assertEqual(auth.format_remaining(3 * 86400 + 4 * 3600 + 5),
+                         "3 d 4 h")
+
+    def test_under_a_minute(self):
+        self.assertEqual(auth.format_remaining(42), "less than a minute")
+
+    def test_expired(self):
+        self.assertEqual(auth.format_remaining(-5), "expired")
+
+
+class TestWarnIfExpiring(unittest.TestCase):
+    """A job holds the token it started with, and nothing renews it mid-run.
+    Starting work on a token with little time left is a failure the user
+    only meets hours later, as a 401."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.home = Path(self._td.name)
+        (self.home / ".fdp" / "cache").mkdir(parents=True)
+        p = mock.patch.object(Path, "home", return_value=self.home)
+        p.start()
+        self.addCleanup(p.stop)
+        self._saved = os.environ.pop("FDP_MIN_TOKEN_HOURS", None)
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        os.environ.pop("FDP_MIN_TOKEN_HOURS", None)
+        if self._saved is not None:
+            os.environ["FDP_MIN_TOKEN_HOURS"] = self._saved
+
+    def _warnings(self, token):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            auth.warn_if_expiring(_bearer_handle(), token)
+        return [str(w.message) for w in caught]
+
+    def _cache(self, token):
+        (self.home / ".fdp" / "cache" / "d3d.token").write_text(token)
+        return token
+
+    def test_short_login_token_warns_and_names_the_remedy(self):
+        msgs = self._warnings(self._cache(_make_jwt(3600 + 30)))
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("1 h 0 min", msgs[0])
+        self.assertIn("fdp login --fresh --device d3d", msgs[0])
+
+    def test_long_token_is_silent(self):
+        self.assertEqual(self._warnings(self._cache(_make_jwt(10 * 3600))), [])
+
+    def test_opaque_token_is_silent(self):
+        self.assertEqual(self._warnings("not-a-jwt"), [])
+
+    def test_threshold_is_configurable(self):
+        os.environ["FDP_MIN_TOKEN_HOURS"] = "12"
+        self.assertEqual(
+            len(self._warnings(self._cache(_make_jwt(10 * 3600)))), 1)
+
+    def test_zero_threshold_disables_it(self):
+        os.environ["FDP_MIN_TOKEN_HOURS"] = "0"
+        self.assertEqual(self._warnings(self._cache(_make_jwt(60))), [])
+
+    def test_token_from_elsewhere_is_not_told_to_log_in(self):
+        # $BEARER_TOKEN and --bearer-token win over the login cache, so
+        # `fdp login --fresh` would not replace them.
+        msgs = self._warnings(_make_jwt(3600 + 30))
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("1 h 0 min", msgs[0])
+        self.assertNotIn("fdp login", msgs[0])
+
+
 class TestExtractToken(unittest.TestCase):
     def test_json_access_token(self):
         self.assertEqual(

@@ -278,22 +278,28 @@ def _run_pelican(cmd) -> "_PtyResult":
 _UNKNOWN_CLIENT = '"invalid_client"'
 
 
+def _client_prefix(pelican_root: str) -> str:
+    return urlparse(pelican_root).path.rstrip("/")
+
+
 def _drop_client_registration(pelican: str, pelican_root: str) -> None:
     """Forget pelican's stored OAuth client for this device's namespace, and
     nothing else: the same credential file holds other devices' logins."""
-    prefix = urlparse(pelican_root).path.rstrip("/")
-    sys.stderr.write(
-        f"fdp: the issuer no longer recognises the stored login for {prefix}; "
-        "registering again.\n")
+    prefix = _client_prefix(pelican_root)
     cmd = [pelican, "credentials", "prefix", "delete", prefix]
     if _run_pelican(cmd).returncode != 0:
         raise AuthError(
-            "could not remove the stale login; run "
+            "could not remove the stored login; run "
             f"`pelican credentials prefix delete {prefix}` and retry")
 
 
-def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
+def _pelican_get_token(pelican_root: str, *, write: bool = False,
+                       fresh: bool = False) -> str:
     """Run the pelican OAuth flow and return the raw JWT.
+
+    pelican returns its stored token until that token's own expiry, with no
+    way to ask for a newer one. `fresh` drops the stored login first, which
+    costs a consent but is the only route to a full-lifetime token.
 
     pelican is run under a pseudo-terminal (see _run_in_pty) so its
     stdout-is-a-TTY gate is satisfied and a fresh interactive consent can
@@ -307,8 +313,13 @@ def _pelican_get_token(pelican_root: str, *, write: bool = False) -> str:
     scope = "write" if write else "read"
     cmd = [pelican, "credentials", "token", "get", scope, pelican_root,
            "--json"]
+    if fresh:
+        _drop_client_registration(pelican, pelican_root)
     result = _run_pelican(cmd)
     if result.returncode != 0 and _UNKNOWN_CLIENT in result.output:
+        sys.stderr.write(
+            "fdp: the issuer no longer recognises the stored login for "
+            f"{_client_prefix(pelican_root)}; registering again.\n")
         _drop_client_registration(pelican, pelican_root)
         result = _run_pelican(cmd)
     if result.returncode != 0:
@@ -336,9 +347,10 @@ def _write_cache(handle, token: str) -> None:
     os.replace(tmp, path)
 
 
-def login(handle, *, write: bool = False) -> "CachedToken | None":
-    """Mint a fresh token via pelican and cache it. Returns None when the
-    device declares no bearer auth (a no-op the CLI reports friendlily)."""
+def login(handle, *, write: bool = False,
+          fresh: bool = False) -> "CachedToken | None":
+    """Get a token via pelican and cache it. Returns None when the device
+    declares no bearer auth (a no-op the CLI reports friendlily)."""
     env_var = bearer_env(handle)
     if env_var is None:
         return None
@@ -347,7 +359,7 @@ def login(handle, *, write: bool = False) -> "CachedToken | None":
         raise AuthError(
             f"device '{handle.schema.name}' has no pelican_root; "
             "cannot mint a token")
-    token = _pelican_get_token(pelican_root, write=write)
+    token = _pelican_get_token(pelican_root, write=write, fresh=fresh)
     _write_cache(handle, token)
     return CachedToken(device=handle.schema.name,
                        scope="write" if write else "read",
@@ -363,6 +375,59 @@ def logout(handle) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def format_remaining(seconds) -> str:
+    """A duration as a person would say it: '2 h 38 min', '3 d 4 h'."""
+    seconds = int(seconds)
+    if seconds <= 0:
+        return "expired"
+    if seconds < 60:
+        return "less than a minute"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {minutes} min"
+    return f"{hours // 24} d {hours % 24} h"
+
+
+DEFAULT_MIN_TOKEN_HOURS = 4.0
+
+
+def _min_token_seconds() -> float:
+    raw = os.environ.get("FDP_MIN_TOKEN_HOURS")
+    try:
+        hours = float(raw) if raw else DEFAULT_MIN_TOKEN_HOURS
+    except ValueError:
+        hours = DEFAULT_MIN_TOKEN_HOURS
+    return hours * 3600
+
+
+def warn_if_expiring(handle, token) -> None:
+    """Warn when work is about to start on a token with little time left.
+
+    A process holds the token it started with and nothing renews it mid-run,
+    so the failure would otherwise arrive hours later as a 401.
+    $FDP_MIN_TOKEN_HOURS sets the threshold (default 4); 0 turns this off.
+    """
+    exp = decode_exp(token)
+    if exp is None:
+        return
+    left = exp - time.time()
+    if left >= _min_token_seconds():
+        return
+    name = handle.schema.name
+    message = (f"The bearer token for '{name}' expires in "
+               f"{format_remaining(left)}; anything still running then "
+               "loses access.")
+    # Only the login cache is ours to renew: $BEARER_TOKEN and an explicit
+    # token take precedence over it, so a new login would not replace them.
+    if token == _read_token_file(_cache_path(handle)):
+        message += (f" `fdp login --fresh --device {name}` issues a "
+                    "full-lifetime token.")
+    warnings.warn(message)
 
 
 def _auto_login_allowed(interactive) -> bool:

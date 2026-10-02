@@ -304,6 +304,7 @@ def _apply_tokens(handles, bearer_token, auto_login) -> None:
             token = auth.get_valid_token(handle, explicit=bearer_token)
         if token is not None:
             os.environ[auth.bearer_env(handle)] = token
+            auth.warn_if_expiring(handle, token)
         elif not interactive and not os.environ.get("FDP_NO_AUTO_LOGIN"):
             suffix = "" if single else f" --device {handle.schema.name}"
             warnings.warn(

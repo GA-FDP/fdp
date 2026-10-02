@@ -25,10 +25,10 @@ from pathlib import Path
 from unittest import mock
 
 
-def _unexpired_jwt():
+def _unexpired_jwt(lifetime=86400):
     h = _b64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
     p = _b64.urlsafe_b64encode(
-        _json.dumps({"exp": int(_time.time()) + 3600}).encode()
+        _json.dumps({"exp": int(_time.time()) + lifetime}).encode()
     ).rstrip(b"=").decode()
     return f"{h}.{p}.sig"
 
@@ -173,6 +173,17 @@ class TestSetupEnvironment(unittest.TestCase):
             self._cat_patch.start()
             from fdp.catalog import catalog as _cat
             _cat._cache = None
+
+    def test_warns_when_the_token_is_about_to_expire(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".fdp" / "cache").mkdir(parents=True)
+            (home / ".fdp" / "cache" / "d3d.token").write_text(
+                _unexpired_jwt(lifetime=3600))
+            with mock.patch.object(Path, "home", return_value=home):
+                os.environ.pop("BEARER_TOKEN", None)
+                with self.assertWarnsRegex(UserWarning, "expires in"):
+                    setup_environment()
 
     def test_warns_when_bearer_device_has_no_token(self):
         with tempfile.TemporaryDirectory() as td:

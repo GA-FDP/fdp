@@ -386,6 +386,48 @@ class TestCliLoginLogout(unittest.TestCase):
                 cli.main()
             self.assertEqual(login_mock.call_args.kwargs.get("write"), True)
 
+    def test_login_is_not_fresh_by_default(self):
+        from fdp import cli, auth
+        ct = auth.CachedToken(device="d3d", scope="read", exp=None)
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "login"]))
+            login_mock = stack.enter_context(
+                mock.patch.object(cli.auth, "login", return_value=ct))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+            self.assertEqual(login_mock.call_args.kwargs.get("fresh"), False)
+
+    def test_login_fresh_flag(self):
+        from fdp import cli, auth
+        ct = auth.CachedToken(device="d3d", scope="read", exp=None)
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "login", "--fresh"]))
+            login_mock = stack.enter_context(
+                mock.patch.object(cli.auth, "login", return_value=ct))
+            with redirect_stdout(io.StringIO()):
+                cli.main()
+            self.assertEqual(login_mock.call_args.kwargs.get("fresh"), True)
+
+    def test_login_says_how_long_the_token_has_left(self):
+        import time
+        from fdp import cli, auth
+        ct = auth.CachedToken(device="d3d", scope="read",
+                              exp=int(time.time()) + 2 * 3600 + 38 * 60 + 30)
+        with ExitStack() as stack:
+            _patch_catalog(stack)
+            stack.enter_context(mock.patch.object(
+                sys, "argv", ["fdp", "login"]))
+            stack.enter_context(
+                mock.patch.object(cli.auth, "login", return_value=ct))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cli.main()
+        self.assertIn("2 h 38 min left", buf.getvalue())
+
     def test_logout_dispatches(self):
         from fdp import cli
         with ExitStack() as stack:
