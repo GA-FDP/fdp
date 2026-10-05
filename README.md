@@ -7,7 +7,11 @@ under `~/.fdp/cache/<device>.token`. `fdp run ...` auto-acquires a token when
 none is valid and the session is interactive; set `FDP_NO_AUTO_LOGIN=1` to
 disable that (e.g. in batch jobs). `fdp logout` deletes the cached token.
 `fdp env` never launches the flow. Resolution order: `-t/--bearer-token`,
-then `$BEARER_TOKEN`, then the managed cache, then the legacy `~/.fdp/token`.
+then `$BEARER_TOKEN`, then the managed cache, then the legacy `~/.fdp/token`
+(in practice a valid `~/.fdp/token` wins over the cache; see the guide).
+`fdp login --fresh` gets a full-lifetime token at the cost of a browser
+approval. When a login fails or a job loses access, see
+[docs/troubleshooting-login.md](docs/troubleshooting-login.md).
 
 ## Devices
 
