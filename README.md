@@ -10,8 +10,8 @@ disable that (e.g. in batch jobs). `fdp logout` deletes the cached token.
 then `$BEARER_TOKEN`, then the managed cache, then the legacy `~/.fdp/token`
 (in practice a valid `~/.fdp/token` wins over the cache; see the guide).
 `fdp login --fresh` gets a full-lifetime token at the cost of a browser
-approval. When a login fails or a job loses access, see
-[docs/troubleshooting-login.md](docs/troubleshooting-login.md).
+approval. When a login fails or a job loses access, see the
+[troubleshooting page](https://ga-fdp.github.io/troubleshooting/).
 
 ## Devices
 
