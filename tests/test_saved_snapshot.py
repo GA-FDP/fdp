@@ -254,7 +254,7 @@ class SnapshotError(Exception):
     pass
 
 
-def fake_toksearch(resolve=None, verify_files=None, token_for=None):
+def fake_toksearch(resolve=None, verify_files=None):
     """The toksearch >= 2.19.0 client, as modules in sys.modules.
 
     The dev env carries an older toksearch, and the conda test env may too:
@@ -265,18 +265,14 @@ def fake_toksearch(resolve=None, verify_files=None, token_for=None):
     snap.resolve = resolve or mock.Mock(return_value=SQL_ID)
     snap.verify_files = verify_files or mock.Mock(
         return_value=SimpleNamespace(checked=4, total=4, failures=[]))
-    db = types.ModuleType("toksearch.sql._snapshot_db")
-    db._token_for = token_for or mock.Mock(return_value="tok")
     pkg = types.ModuleType("toksearch")
     pkg.__path__ = []
     sql = types.ModuleType("toksearch.sql")
     sql.__path__ = []
     pkg.sql = sql
     sql.snapshot = snap
-    sql._snapshot_db = db
     return {"toksearch": pkg, "toksearch.sql": sql,
-            "toksearch.sql.snapshot": snap,
-            "toksearch.sql._snapshot_db": db}
+            "toksearch.sql.snapshot": snap}
 
 
 def fake_ptdata(doc):
@@ -374,7 +370,9 @@ class TestSave(_Cli):
         self.assertEqual(kw["sql_snapshots"], {"d3drdb": SQL_ID})
         loc = ts["toksearch.sql.snapshot"].resolve.call_args
         self.assertEqual(loc.args[0].name, "d3drdb")
-        self.assertEqual(loc.kwargs.get("token"), "tok")
+        # The token is resolve's business (public API), not fdp's.
+        self.assertEqual(loc.args[1:], ())
+        self.assertEqual(loc.kwargs, {})
         self.assertIn("d3drdb  " + SQL_ID, out)
         with open(out_path) as fh:
             self.assertEqual(json.load(fh)["schema"], "fdp-snapshot/2")
