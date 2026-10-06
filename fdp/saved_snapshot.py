@@ -71,7 +71,15 @@ def _ptdata_writes_v2(ptdata):
     build_snapshot does not take `sql_snapshots`, and the honest answer is
     the version, not "unexpected keyword argument".
     """
-    if "fdp-snapshot/2" not in getattr(ptdata, "SCHEMAS", ()):
+    # The capability is the keyword, not a module attribute: ptdata keeps
+    # SCHEMAS in ptdata.snapshot, and a stand-in that merely sets an
+    # attribute passed this check while the real pairing failed.
+    import inspect
+    try:
+        params = inspect.signature(ptdata.build_snapshot).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "sql_snapshots" not in params:
         sys.exit("this device pins a shot-database snapshot, and recording "
                  "it needs ptdata >= 2.11.3 (fdp-snapshot/2). Upgrade ptdata.")
 
