@@ -275,10 +275,18 @@ def fake_toksearch(resolve=None, verify_files=None):
             "toksearch.sql.snapshot": snap}
 
 
-def fake_ptdata(doc):
+def _build_snapshot_v2(store_root, shots, shards=(), catalog=None, index=None,
+                       sql_snapshots=None):
+    """ptdata 2.11.3's signature; save's capability check reads it."""
+
+
+def _build_snapshot_v1(store_root, shots, shards=(), catalog=None, index=None):
+    """ptdata before 2.11.3: no sql_snapshots keyword."""
+
+
+def fake_ptdata(doc, build=_build_snapshot_v2):
     pt = mock.Mock()
-    pt.SCHEMAS = ("fdp-snapshot/1", "fdp-snapshot/2")
-    pt.build_snapshot.return_value = doc
+    pt.build_snapshot = mock.create_autospec(build, return_value=doc)
     pt.snapshot_token.return_value = "deadbeef"
     pt.verify_snapshot.return_value = SimpleNamespace(
         ok=True, failures=[], checked=2, total=2, sampled=False)
@@ -413,8 +421,7 @@ class TestSave(_Cli):
 
     def test_a_ptdata_that_cannot_write_v2_is_named(self):
         out_path = tempfile.mktemp(suffix=".json")
-        pt = fake_ptdata(a_v2_doc())
-        pt.SCHEMAS = ("fdp-snapshot/1",)
+        pt = fake_ptdata(a_v2_doc(), build=_build_snapshot_v1)
         code, _, _ = self.run_cli(save_args(out_path), pt,
                                   locators=[a_sql_locator()])
         self.assertIn("ptdata >= 2.11.3", str(code))
