@@ -86,13 +86,12 @@ def _sql_client():
     try:
         from toksearch.sql.snapshot import (
             SnapshotError, resolve, verify_files)
-        from toksearch.sql._snapshot_db import _token_for
     except ImportError as exc:
         sys.exit("this device pins a shot-database snapshot, and naming it "
                  "needs toksearch >= 2.19.0 ({}). Upgrade toksearch.".format(
                      exc))
     return SimpleNamespace(SnapshotError=SnapshotError, resolve=resolve,
-                           verify_files=verify_files, token_for=_token_for)
+                           verify_files=verify_files)
 
 
 def sql_locators(device=None):
@@ -134,7 +133,8 @@ def resolve_sql_snapshots(locators):
     out = {}
     for loc in locators:
         try:
-            out[loc.name] = client.resolve(loc, token=client.token_for(loc))
+            # resolve fetches the locator's bearer token itself.
+            out[loc.name] = client.resolve(loc)
         except client.SnapshotError as exc:
             sys.exit("cannot name the {} snapshot a run would read, so no "
                      "snapshot was written: {}".format(loc.name, exc))
