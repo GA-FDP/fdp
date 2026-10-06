@@ -228,10 +228,21 @@ def do_snapshot(args) -> None:
         shards = snap_mod.parse_names(args.shard)
         shards += snap_mod.shards_for(snap_mod.parse_names(args.tree), shots)
         ptdata = snap_mod._ptdata()
+        # The shot database a run here would read, by locator name. Settled
+        # BEFORE building, so a device that declares one but cannot name it
+        # writes nothing rather than a /1 file that silently omits it.
+        sql_snapshots = snap_mod.resolve_sql_snapshots(
+            snap_mod.sql_locators(getattr(args, "device", None)))
+        extra = {}
+        if sql_snapshots:
+            snap_mod._ptdata_writes_v2(ptdata)
+            # Only passed when there is something to record, so a device
+            # without a shot database writes the /1 file it always did.
+            extra["sql_snapshots"] = sql_snapshots
         try:
             doc = ptdata.build_snapshot(root, shots=shots,
                                         shards=sorted(set(shards)),
-                                        catalog=catalog)
+                                        catalog=catalog, **extra)
         except Exception as exc:
             # A snapshot that quietly omits a shot misrepresents what a run
             # read, so build_snapshot refuses rather than shortens. Relay
@@ -249,6 +260,8 @@ def do_snapshot(args) -> None:
             print("    No shards named. Model trees will resolve through "
                   "catalog {}, so this citation lasts only as long as that "
                   "catalog does -- pass --tree to pin them.".format(catalog))
+        for name, sid in sql_snapshots.items():
+            print("{}  {}".format(name, sid))
         print("token {}".format(ptdata.snapshot_token(doc)))
         return
 
@@ -273,14 +286,54 @@ def do_snapshot(args) -> None:
                 kind, key, expected, actual), file=sys.stderr)
         scope = ("{} of {} (SAMPLED)".format(result.checked, result.total)
                  if result.sampled else "all {}".format(result.total))
+        ok, sampled = result.ok, result.sampled
         if result.ok:
             print("OK  {} entries verified against their bytes".format(scope))
-            if result.sampled:
-                print("    A sample is a weaker claim: the rest is unchecked.")
         else:
             print("FAILED  {} entries checked, {} did not match".format(
                 scope, len(result.failures)), file=sys.stderr)
+
+        # The shot database's Parquet files, after the shots: the same
+        # sample size applies to its tables as to the shots.
+        sql_snapshots = doc.get("sql_snapshots") or {}
+        if sql_snapshots:
+            by_name = {l.name: l for l in snap_mod.sql_locators(
+                getattr(args, "device", None))}
+            client = snap_mod._sql_client()
+            for name, sid in sql_snapshots.items():
+                locator = by_name.get(name)
+                if locator is None:
+                    sys.exit("{} pins {} snapshot {}, and no device here "
+                             "declares a sql_snapshot locator named {!r}, "
+                             "so its bytes cannot be checked.".format(
+                                 args.path, name, sid, name))
+                try:
+                    res = client.verify_files(locator, sid,
+                                              sample=args.sample)
+                except client.SnapshotError as exc:
+                    sys.exit("cannot check {} snapshot {}: {}".format(
+                        name, sid, exc))
+                for path, expected, actual in res.failures:
+                    print("FAIL  parquet {}: expected {} got {}".format(
+                        path, expected, actual), file=sys.stderr)
+                part = res.checked < res.total
+                sampled = sampled or part
+                where = ("{} of {} (SAMPLED)".format(res.checked, res.total)
+                         if part else "all {}".format(res.total))
+                if res.failures:
+                    ok = False
+                    print("FAILED  {} {}: {} parquet files checked, {} did "
+                          "not match".format(name, sid, where,
+                                             len(res.failures)),
+                          file=sys.stderr)
+                else:
+                    print("OK  {} {}: {} parquet files verified against "
+                          "their bytes".format(name, sid, where))
+
+        if not ok:
             sys.exit(1)
+        if sampled:
+            print("    A sample is a weaker claim: the rest is unchecked.")
         return
 
 
@@ -570,9 +623,11 @@ def build_parser() -> argparse.ArgumentParser:
     vf = snap_sub.add_parser("verify", help="Re-fetch and check the bytes")
     vf.add_argument("path")
     vf.add_argument("--sample", type=int, default=None, metavar="N",
-                    help="Check N entries chosen at random. Downloads every "
-                         "version directory it checks, so a full run is an "
-                         "occasional deliberate act.")
+                    help="Check N entries chosen at random, and the "
+                         "Parquet files of N tables of a pinned shot "
+                         "database. Downloads every version directory it "
+                         "checks, so a full run is an occasional deliberate "
+                         "act.")
     vf.set_defaults(func=do_snapshot, reads_store=True)
 
     ex = snap_sub.add_parser("extract",

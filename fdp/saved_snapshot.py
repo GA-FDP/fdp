@@ -27,6 +27,13 @@ from an unrelated command.
 import json
 import os
 import sys
+from types import SimpleNamespace
+
+#: The saved-snapshot schemas this fdp reads. `/2` adds `sql_snapshots`, the
+#: shot-database snapshot (by locator name) a run read; a `/1` file is still
+#: read, with no such pin. Anything else is refused by name: replaying a file
+#: whose fields this reader does not know would ignore the pin it carries.
+SCHEMAS = ("fdp-snapshot/1", "fdp-snapshot/2")
 
 
 def _ptdata():
@@ -55,6 +62,91 @@ def _shard_key(treename, shot):
         sys.exit("--tree needs toksearch >= 2.14.0 to map a tree to a shard "
                  "({}). Pass --shard NAME instead if you know it.".format(exc))
     return shard_key(treename, shot)
+
+
+def _ptdata_writes_v2(ptdata):
+    """`save` with a shot-database pin needs a ptdata that writes `/2`.
+
+    Checked before building rather than relayed from a TypeError: an older
+    build_snapshot does not take `sql_snapshots`, and the honest answer is
+    the version, not "unexpected keyword argument".
+    """
+    if "fdp-snapshot/2" not in getattr(ptdata, "SCHEMAS", ()):
+        sys.exit("this device pins a shot-database snapshot, and recording "
+                 "it needs ptdata >= 2.11.3 (fdp-snapshot/2). Upgrade ptdata.")
+
+
+def _sql_client():
+    """toksearch's d3drdb snapshot client, imported rather than reimplemented.
+
+    fdp names the snapshot a run would read; toksearch is what reads it, so
+    the rule for "which one" (env pin, else newest) must be the same code,
+    not a second copy that can drift from it.
+    """
+    try:
+        from toksearch.sql.snapshot import (
+            SnapshotError, resolve, verify_files)
+        from toksearch.sql._snapshot_db import _token_for
+    except ImportError as exc:
+        sys.exit("this device pins a shot-database snapshot, and naming it "
+                 "needs toksearch >= 2.19.0 ({}). Upgrade toksearch.".format(
+                     exc))
+    return SimpleNamespace(SnapshotError=SnapshotError, resolve=resolve,
+                           verify_files=verify_files, token_for=_token_for)
+
+
+def sql_locators(device=None):
+    """The `sql_snapshot` locators of the device(s) this command acts on.
+
+    The same handles `setup_environment(device=...)` composed the
+    environment from -- so the shot-database snapshot recorded belongs to
+    the device whose FDP_STORE_ROOT the shots came from. Keys in the file
+    are locator names, so two devices both declaring one name would make
+    the file ambiguous: refused rather than one silently winning.
+    """
+    from .devices import active_handles
+    locs, seen = [], {}
+    for handle in active_handles(device):
+        for loc in handle.schema.locators:
+            if loc.kind != "sql_snapshot":
+                continue
+            if loc.name in seen:
+                sys.exit("devices {} and {} both declare a sql_snapshot "
+                         "locator named {!r}; pass --device to choose "
+                         "one.".format(seen[loc.name], handle.schema.name,
+                                       loc.name))
+            seen[loc.name] = handle.schema.name
+            locs.append(loc)
+    return locs
+
+
+def resolve_sql_snapshots(locators):
+    """`{locator name: snapshot id}` -- what a run here would read now.
+
+    An env pin (`FDP_SQL_SNAPSHOT_<NAME>`, from `fdp run` or a replay) wins,
+    else the newest published; the rule is toksearch's `resolve`. A locator
+    that cannot be resolved stops the save: a snapshot that cannot name
+    what a run would read must not be written without it.
+    """
+    if not locators:
+        return {}
+    client = _sql_client()
+    out = {}
+    for loc in locators:
+        try:
+            out[loc.name] = client.resolve(loc, token=client.token_for(loc))
+        except client.SnapshotError as exc:
+            sys.exit("cannot name the {} snapshot a run would read, so no "
+                     "snapshot was written: {}".format(loc.name, exc))
+    return out
+
+
+def _check_schema(doc, where):
+    schema = doc.get("schema") if isinstance(doc, dict) else None
+    if schema not in SCHEMAS:
+        sys.exit("{} declares schema {!r}, not one of {}".format(
+            where, schema, ", ".join(repr(s) for s in SCHEMAS)))
+    return doc
 
 
 def _token(doc):
@@ -135,10 +227,7 @@ def load(path):
         sys.exit("cannot read snapshot {}: {}".format(path, exc))
     except ValueError as exc:
         sys.exit("{} is not valid JSON: {}".format(path, exc))
-    if doc.get("schema") != "fdp-snapshot/1":
-        sys.exit("{} declares schema {!r}, not 'fdp-snapshot/1'".format(
-            path, doc.get("schema")))
-    return doc
+    return _check_schema(doc, path)
 
 
 def extract(inputs_path):
@@ -156,7 +245,8 @@ def extract(inputs_path):
         sys.exit("{} records archive_version={!r}: that run did not read a "
                  "versioned store, so there is no snapshot to extract.".format(
                      inputs_path, doc))
-    return doc
+    # `/2` carries the run's `sql_snapshots` through as part of the document.
+    return _check_schema(doc, "{} archive_version".format(inputs_path))
 
 
 def show(doc):
@@ -168,6 +258,8 @@ def show(doc):
     print("names    {} shots, {} shard{}".format(
         len(doc.get("shots", [])), len(doc.get("shared", [])),
         "" if len(doc.get("shared", [])) == 1 else "s"))
+    for name, sid in (doc.get("sql_snapshots") or {}).items():
+        print("{}  {}".format(name, sid))
     if not doc.get("shared"):
         print("         (no shards named: model trees will resolve through "
               "the catalog, so this citation needs that catalog to survive)")
