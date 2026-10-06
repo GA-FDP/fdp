@@ -35,7 +35,10 @@ requirements:
     - xrdcl-pelican-fdp
     - pelicanplatform >=7.24.3,<8
     - fdp-schema >=0.2.1
-    - toksearch
+    # >=2.19.0: `fdp snapshot save|verify` name and check the d3drdb
+    # snapshot through toksearch.sql.snapshot (resolve, verify_files),
+    # and an older toksearch refuses the fdp-snapshot/2 files this writes.
+    - toksearch >=2.19.0
     # DELIBERATE AND LOAD-BEARING -- do not remove as an unused dependency.
     #
     # graphviz ships `bin/fdp` (a symlink to `dot`, dispatching on argv[0])
@@ -71,6 +74,12 @@ requirements:
     # The test below is the guard. If it ever fails, this trick has stopped
     # working and the CLI needs renaming instead.
     - graphviz
+  run_constraints:
+    # ptdata is optional (a public device like MAST needs none of it),
+    # but `fdp snapshot` writes and reads fdp-snapshot/2 through it, and
+    # an older one neither writes nor verifies /2. Not a run dependency:
+    # a constraint, so it binds only where ptdata is installed.
+    - ptdata >=2.11.3
 
 tests:
   - script:
