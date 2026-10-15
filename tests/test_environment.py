@@ -286,6 +286,17 @@ class TestGenericConfigParity(unittest.TestCase):
             self._EXPECTED_GENERIC_KEYS,
         )
 
+    def test_ptdata_library_suffix_follows_platform(self):
+        from fdp.catalog import catalog
+        handle = catalog["d3d"]
+        for platform, ext in (("linux", ".so"), ("darwin", ".dylib")):
+            with self.subTest(platform=platform), \
+                    mock.patch("fdp.environment.sys.platform", platform):
+                config = _generic_config(handle)
+                self.assertEqual(Path(config["PTDATA_LIBRARY"]).name, f"libd3{ext}")
+                self.assertEqual(Path(config["PTDATA_PLUGIN_LIB"]).name,
+                                 f"libjson_index_plugin{ext}")
+
 
 class TestMastCleanEnv(unittest.TestCase):
     """A public, no-XRootD/no-token device gets a clean env."""
