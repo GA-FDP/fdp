@@ -119,10 +119,11 @@ def _generic_config(handle=None) -> dict:
 
     # PTData library hookup — only with a ptdata_indexed locator.
     if "ptdata_indexed" in kinds:
+        shlib = ".dylib" if sys.platform == "darwin" else ".so"
         config.update({
             "PTDATA_LOC": os.getenv("PTDATA_LOC", "1"),
-            "PTDATA_LIBRARY": str(lib_dir / "libd3.so"),
-            "PTDATA_PLUGIN_LIB": str(lib_dir / "libjson_index_plugin.so"),
+            "PTDATA_LIBRARY": str(lib_dir / f"libd3{shlib}"),
+            "PTDATA_PLUGIN_LIB": str(lib_dir / f"libjson_index_plugin{shlib}"),
         })
 
     # pymssql TLS requirement — only with a sql locator.
