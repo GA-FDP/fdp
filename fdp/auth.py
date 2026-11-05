@@ -24,6 +24,7 @@ and cached per-device as bare JWTs under ~/.fdp/cache/.
 import base64
 import json
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -170,16 +171,65 @@ def _extract_token(stdout: str) -> "str | None":
     if tok:
         return tok
     for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        tok = _token_from_json(line)
+        tok = _token_in_line(line)
         if tok:
             return tok
-        if (line.count(".") == 2 and " " not in line
-                and "{" not in line and '"' not in line):
-            return line
     return None
+
+
+def _token_in_line(line: str) -> "str | None":
+    """The token a single output line carries, if it is a JSON token line or
+    a bare JWT (three dot-separated, space-free segments)."""
+    line = line.strip()
+    if not line:
+        return None
+    tok = _token_from_json(line)
+    if tok:
+        return tok
+    if (line.count(".") == 2 and " " not in line
+            and "{" not in line and '"' not in line):
+        return line
+    return None
+
+
+_JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+_MAYBE_TOKEN_START = re.compile(rb"^\s*(\{|[A-Za-z0-9_.-]+$)")
+
+
+class _TokenFilter:
+    """Filters pelican's terminal output before it is shown to the user.
+
+    The output ends with the token itself, which must never reach the
+    terminal (or a log capturing it). Whole lines carrying a token are
+    dropped and any JWT inside another line is replaced. An unfinished line
+    -- a prompt waiting for input -- is shown once output pauses, unless it
+    could still turn out to be a token line.
+    """
+
+    def __init__(self):
+        self._pending = b""
+
+    def feed(self, data: bytes) -> bytes:
+        self._pending += data
+        out = []
+        while b"\n" in self._pending:
+            line, self._pending = self._pending.split(b"\n", 1)
+            line += b"\n"
+            if not _token_in_line(line.decode("utf-8", errors="replace")):
+                out.append(_JWT_RE.sub(b"[token hidden]", line))
+        return b"".join(out)
+
+    def idle(self) -> bytes:
+        if (not self._pending or b"eyJ" in self._pending
+                or _MAYBE_TOKEN_START.match(self._pending)):
+            return b""
+        return self.finish()
+
+    def finish(self) -> bytes:
+        rest, self._pending = self._pending, b""
+        if _token_in_line(rest.decode("utf-8", errors="replace")):
+            return b""
+        return _JWT_RE.sub(b"[token hidden]", rest)
 
 
 @dataclass
@@ -197,12 +247,14 @@ def _run_in_pty(cmd) -> "_PtyResult":
     device-code/browser flow, and it refuses to start that flow when stdout
     is a pipe. Capturing stdout with an ordinary pipe (the obvious approach)
     therefore makes re-consent impossible. So we give pelican a real terminal
-    on all three fds. The child's combined output is streamed to our stderr
-    (the user sees the approval URL and any prompt live) while also being
-    captured, so the JWT can be parsed once the flow completes. When our own
-    stdin is a TTY it is forwarded to the child so the user can answer a
-    prompt. Silent renewal (valid refresh token) simply prints the token and
-    returns the same way -- no terminal interaction needed.
+    on all three fds. The child's combined output is captured, so the JWT can
+    be parsed once the flow completes, and streamed to our stderr through
+    _TokenFilter, so the user sees the approval URL and any prompt live but
+    never the token. When our own stdin is a TTY it is forwarded to the
+    child so the user can answer a prompt; our terminal's echo is off
+    meanwhile, because only the child's terminal knows when input is a
+    password. Silent renewal (valid refresh token) simply prints the token
+    and returns the same way -- no terminal interaction needed.
     """
     import pty  # POSIX-only; the whole FDP stack is Linux.
 
@@ -226,6 +278,15 @@ def _run_in_pty(cmd) -> "_PtyResult":
     except (OSError, ValueError, AttributeError):
         stdin_fd, watch_stdin = None, False
 
+    def show(data):
+        if data and err_fd is not None:
+            try:
+                os.write(err_fd, data)
+            except OSError:
+                pass
+
+    saved_tty = _quiet_terminal(stdin_fd) if watch_stdin else None
+    shown = _TokenFilter()
     chunks = []
     try:
         while True:
@@ -234,6 +295,8 @@ def _run_in_pty(cmd) -> "_PtyResult":
                 ready, _, _ = select.select(watch, [], [], 0.2)
             except (OSError, ValueError):
                 break
+            if not ready:
+                show(shown.idle())
             if master in ready:
                 try:
                     data = os.read(master, 4096)
@@ -242,11 +305,7 @@ def _run_in_pty(cmd) -> "_PtyResult":
                 if not data:
                     break
                 chunks.append(data)
-                if err_fd is not None:
-                    try:
-                        os.write(err_fd, data)
-                    except OSError:
-                        pass
+                show(shown.feed(data))
             if watch_stdin and stdin_fd in ready:
                 try:
                     fwd = os.read(stdin_fd, 4096)
@@ -259,10 +318,39 @@ def _run_in_pty(cmd) -> "_PtyResult":
                         pass
     finally:
         os.close(master)
+        if saved_tty is not None:
+            _restore_terminal(stdin_fd, saved_tty)
+    show(shown.finish())
     proc.wait()
     return _PtyResult(
         returncode=proc.returncode,
         output=b"".join(chunks).decode("utf-8", errors="replace"))
+
+
+def _quiet_terminal(fd):
+    """Stop *fd*'s terminal echoing and line-buffering what the user types,
+    so each keystroke goes straight to the child's terminal, which echoes it
+    or not. Signals stay on: Ctrl-C still interrupts. Returns the settings
+    to restore, or None if they could not be changed."""
+    import termios
+    try:
+        saved = termios.tcgetattr(fd)
+        quiet = termios.tcgetattr(fd)
+        quiet[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON)
+        quiet[6][termios.VMIN] = 1
+        quiet[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, quiet)
+    except termios.error:
+        return None
+    return saved
+
+
+def _restore_terminal(fd, saved) -> None:
+    import termios
+    try:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    except termios.error:
+        pass
 
 
 def _run_pelican(cmd) -> "_PtyResult":
