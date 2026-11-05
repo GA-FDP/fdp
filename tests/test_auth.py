@@ -531,6 +531,98 @@ class TestRunInPty(unittest.TestCase):
             auth._run_in_pty(["/nonexistent/pelican-xyz"])
 
 
+JWT = "eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjE3MDAwMDAwMDB9.c2lnbmF0dXJl"
+
+
+class TestTokenFilter(unittest.TestCase):
+    """pelican's output is shown to the user, but the token it ends with
+    must never be."""
+
+    def run_filter(self, *chunks):
+        f = auth._TokenFilter()
+        return b"".join(f.feed(c) for c in chunks) + f.finish()
+
+    def test_json_token_line_dropped(self):
+        out = self.run_filter(
+            b"Visit https://example/device\r\n",
+            json.dumps({"access_token": JWT, "expires_in": 3600}).encode()
+            + b"\r\n")
+        self.assertIn(b"https://example/device", out)
+        self.assertNotIn(JWT.encode(), out)
+        self.assertNotIn(b"access_token", out)
+
+    def test_bare_token_line_dropped(self):
+        self.assertEqual(self.run_filter(JWT.encode() + b"\r\n"), b"")
+
+    def test_token_split_across_reads_dropped(self):
+        line = json.dumps({"access_token": JWT}).encode() + b"\n"
+        out = self.run_filter(line[:10], line[10:30], line[30:])
+        self.assertEqual(out, b"")
+
+    def test_token_inside_other_text_replaced(self):
+        out = self.run_filter(f"got token {JWT} ok\n".encode())
+        self.assertEqual(out, b"got token [token hidden] ok\n")
+
+    def test_prompt_without_newline_shown_when_idle(self):
+        f = auth._TokenFilter()
+        self.assertEqual(f.feed(b"Password: "), b"")
+        self.assertEqual(f.idle(), b"Password: ")
+        self.assertEqual(f.idle(), b"")
+
+    def test_unfinished_token_held_when_idle(self):
+        f = auth._TokenFilter()
+        f.feed(b'{"access_token": "' + JWT[:20].encode())
+        self.assertEqual(f.idle(), b"")
+        f2 = auth._TokenFilter()
+        f2.feed(JWT[:20].encode())
+        self.assertEqual(f2.idle(), b"")
+
+
+class TestRunInPtyHidesToken(unittest.TestCase):
+    def test_token_captured_but_not_shown(self):
+        script = (
+            "import json;"
+            "print('Enter the password: ', end='', flush=True);"
+            "import time; time.sleep(0.5); print();"
+            f"print(json.dumps({{'access_token': '{JWT}'}}))"
+        )
+        with tempfile.TemporaryFile() as err:
+            with mock.patch.object(sys, "stderr", err):
+                result = auth._run_in_pty([sys.executable, "-c", script])
+            err.seek(0)
+            shown = err.read()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(auth._extract_token(result.output), JWT)
+        self.assertIn(b"Enter the password: ", shown)
+        self.assertNotIn(JWT.encode(), shown)
+
+
+class TestQuietTerminal(unittest.TestCase):
+    """While pelican runs, our terminal must not echo what the user types
+    (pelican's own terminal decides that) but Ctrl-C must still work."""
+
+    def test_echo_off_signals_on_then_restored(self):
+        import pty
+        import termios
+        master, slave = pty.openpty()
+        try:
+            before = termios.tcgetattr(slave)
+            saved = auth._quiet_terminal(slave)
+            during = termios.tcgetattr(slave)
+            self.assertFalse(during[3] & termios.ECHO)
+            self.assertFalse(during[3] & termios.ICANON)
+            self.assertTrue(during[3] & termios.ISIG)
+            auth._restore_terminal(slave, saved)
+            self.assertEqual(termios.tcgetattr(slave), before)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_not_a_terminal_returns_none(self):
+        with tempfile.TemporaryFile() as f:
+            self.assertIsNone(auth._quiet_terminal(f.fileno()))
+
+
 class TestEnsureToken(unittest.TestCase):
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
