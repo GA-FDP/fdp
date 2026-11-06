@@ -186,10 +186,15 @@ def _token_in_line(line: str) -> "str | None":
     tok = _token_from_json(line)
     if tok:
         return tok
-    if (line.count(".") == 2 and " " not in line
-            and "{" not in line and '"' not in line):
+    if _BARE_JWT_RE.fullmatch(line):
         return line
     return None
+
+
+# A bare JWT is three base64url segments (header.payload.signature). Matching
+# on "two dots and no spaces" alone also swallowed URLs such as pelican's
+# device-approval link (https://fdp-d3d-origin.nationalresearchplatform.org:8000/...).
+_BARE_JWT_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 
 
 _JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
