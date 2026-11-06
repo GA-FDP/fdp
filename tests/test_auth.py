@@ -551,6 +551,18 @@ class TestTokenFilter(unittest.TestCase):
         self.assertNotIn(JWT.encode(), out)
         self.assertNotIn(b"access_token", out)
 
+    def test_approval_url_with_two_dots_shown(self):
+        # The real d3d approval URL has exactly two dots and no spaces, which
+        # the old bare-token heuristic mistook for a JWT and hid.
+        url = (b"https://fdp-d3d-origin.nationalresearchplatform.org:8000"
+               b"/view/issuer/device?namespace=%2Ffdp-d3d&user_code=AB12-CD34")
+        out = self.run_filter(
+            b"please navigate to the following URL and approve the request:"
+            b"\r\n\r\n", url + b"\r\n", JWT.encode() + b"\r\n")
+        self.assertIn(url, out)
+        self.assertNotIn(JWT.encode(), out)
+        self.assertIsNone(auth._token_in_line(url.decode()))
+
     def test_bare_token_line_dropped(self):
         self.assertEqual(self.run_filter(JWT.encode() + b"\r\n"), b"")
 

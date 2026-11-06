@@ -28,7 +28,7 @@ Most commands need no device selection:
 To choose explicitly, in increasing order of persistence:
 
 ```bash
-fdp --device d3d ls /archives       # one invocation (also: fdp ls -D d3d)
+fdp --device d3d ls /fdp-d3d/archives   # one invocation (also: fdp ls -D d3d)
 export FDP_DEFAULT_DEVICE=d3d       # one shell
 fdp device use d3d                  # recorded in ~/.fdp/config.toml
 fdp device use --clear              # undo
