@@ -625,7 +625,12 @@ class TestQuietTerminal(unittest.TestCase):
             self.assertFalse(during[3] & termios.ICANON)
             self.assertTrue(during[3] & termios.ISIG)
             auth._restore_terminal(slave, saved)
-            self.assertEqual(termios.tcgetattr(slave), before)
+            after = termios.tcgetattr(slave)
+            # macOS sets PENDIN (reprint pending input) on any reset.
+            pendin = getattr(termios, "PENDIN", 0)
+            after[3] &= ~pendin
+            before[3] &= ~pendin
+            self.assertEqual(after, before)
         finally:
             os.close(master)
             os.close(slave)
