@@ -329,13 +329,19 @@ def setup_environment(
     that one. Env emission is locator-driven. Mutates os.environ in place and
     is safe to call repeatedly.
 
-    Call it before anything imports XRootD.client: XrdCl reads its plugin
-    dir and bearer token when it starts, and ignores later changes.
+    Call it before importing toksearch, MDSplus, ptdata or XRootD: loading
+    libXrdCl starts it, and it reads its plugin dir and bearer token then.
     """
+    # Loading the catalog imports device packages, which may set env vars
+    # and start XrdCl themselves; compare against the env XrdCl started with.
+    started = _xrdcl_started()
+    before = dict(os.environ)
     handles = active_handles(device)
+    if not started:
+        started = _xrdcl_started()
+        before = dict(os.environ)
     read_at_start = ["XRD_PLUGINCONFDIR"] + [
         e for e in (auth.bearer_env(h) for h in handles) if e]
-    before = {k: os.environ.get(k) for k in read_at_start}
 
     apply_environment(compose_device_config(handles), os.environ)
 
@@ -343,9 +349,14 @@ def setup_environment(
         os.environ[key] = str(value)
 
     _apply_tokens(handles, bearer_token, auto_login)
-    _warn_if_too_late_for_xrdcl(
-        [k for k in dict.fromkeys(read_at_start)
-         if os.environ.get(k) != before[k]])
+    if started:
+        _warn_too_late_for_xrdcl(
+            [k for k in dict.fromkeys(read_at_start)
+             if os.environ.get(k) != before.get(k)])
+
+
+class XrdClStartedWarning(RuntimeWarning):
+    """setup_environment() changed a value XrdCl had already read."""
 
 
 def _xrdcl_started() -> bool:
@@ -358,13 +369,13 @@ def _xrdcl_started() -> bool:
         return "pyxrootd.client" in sys.modules or "MDSplus" in sys.modules
 
 
-def _warn_if_too_late_for_xrdcl(changed: list) -> None:
-    if not changed or not _xrdcl_started():
+def _warn_too_late_for_xrdcl(changed: list) -> None:
+    if not changed:
         return
     warnings.warn(
         f"setup_environment() set {', '.join(changed)} after the XRootD "
         "client had already started in this process, so XRootD will not see "
         "the change and MDSplus reads over Pelican will fail (TreeFOPENR). "
-        "Call setup_environment() before importing anything that imports "
-        "XRootD.client, or launch the process under `fdp run`.",
-        RuntimeWarning, stacklevel=3)
+        "Call setup_environment() before importing toksearch, MDSplus, "
+        "ptdata or XRootD, or launch the process under `fdp run`.",
+        XrdClStartedWarning, stacklevel=3)

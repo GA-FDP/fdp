@@ -83,12 +83,13 @@ class TestWarnsWhenXrdClAlreadyStarted(unittest.TestCase):
             if v is not None:
                 os.environ[k] = v
 
-    def _setup(self, started: bool):
-        with mock.patch("fdp.environment._xrdcl_started",
-                        return_value=started):
+    def _setup(self, started):
+        # started: bool, or [at entry, after the catalog loads]
+        seq = started if isinstance(started, list) else [started, started]
+        with mock.patch("fdp.environment._xrdcl_started", side_effect=seq):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                setup_environment(device="d3d", bearer_token="tok")
+                setup_environment(device="d3d", bearer_token="s3cr3t-tok")
         return [w for w in caught if "fdp run" in str(w.message)]
 
     def test_warns_when_token_and_plugin_dir_arrive_late(self):
@@ -97,15 +98,78 @@ class TestWarnsWhenXrdClAlreadyStarted(unittest.TestCase):
         msg = str(hits[0].message)
         self.assertIn("BEARER_TOKEN", msg)
         self.assertIn("XRD_PLUGINCONFDIR", msg)
-        self.assertNotIn("tok", msg.replace("token", ""))
+        self.assertNotIn("s3cr3t", msg)
+
+    def test_warns_when_catalog_load_sets_the_token(self):
+        # A contributor's import (toksearch_d3d) may export the token while
+        # the catalog loads; that is still after XrdCl started.
+        from fdp import devices
+        real = devices.active_handles
+
+        def loading_sets_token(device=None):
+            os.environ["BEARER_TOKEN"] = "s3cr3t-tok"
+            return real(device)
+
+        with mock.patch("fdp.environment.active_handles", loading_sets_token):
+            hits = self._setup(started=True)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("BEARER_TOKEN", str(hits[0].message))
+
+    def test_no_warning_when_catalog_load_sets_token_then_starts_xrdcl(self):
+        from fdp import devices
+        real = devices.active_handles
+
+        def loading_sets_env(device=None):
+            os.environ["BEARER_TOKEN"] = "s3cr3t-tok"
+            os.environ["XRD_PLUGINCONFDIR"] = "/env/etc/xrootd/client.plugins.d"
+            return real(device)
+
+        with mock.patch("fdp.environment.active_handles", loading_sets_env):
+            self.assertEqual(self._setup(started=[False, True]), [])
+
+    def test_warns_when_catalog_load_starts_xrdcl_without_token(self):
+        hits = self._setup(started=[False, True])
+        self.assertEqual(len(hits), 1)
+        self.assertIn("BEARER_TOKEN", str(hits[0].message))
 
     def test_no_warning_before_xrdcl_starts(self):
         self.assertEqual(self._setup(started=False), [])
 
     def test_no_warning_when_values_were_already_in_place(self):
-        os.environ["BEARER_TOKEN"] = "tok"
+        os.environ["BEARER_TOKEN"] = "s3cr3t-tok"
         os.environ["XRD_PLUGINCONFDIR"] = "/env/etc/xrootd/client.plugins.d"
         self.assertEqual(self._setup(started=True), [])
+
+
+class TestCliSilencesWarning(unittest.TestCase):
+    """The CLI hands the env to a child (fdp run) or re-execs, so XrdCl in
+    the CLI process itself starting early is not the user's problem."""
+
+    def test_fdp_env_does_not_surface_the_warning(self):
+        import io
+        from contextlib import redirect_stdout
+        from fdp import cli
+        from fdp.environment import XrdClStartedWarning
+
+        def noisy_setup(**kwargs):
+            warnings.warn("late", XrdClStartedWarning)
+
+        with mock.patch("fdp.catalog.entry_points",
+                        return_value=[_make_catalog_ep("d3d", _D3D_TEST_YAML)]), \
+             mock.patch.object(cli, "setup_environment", noisy_setup), \
+             mock.patch.object(sys, "argv", ["fdp", "env"]), \
+             redirect_stdout(io.StringIO()), \
+             warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from fdp.catalog import catalog as _cat
+            _cat._cache = None
+            try:
+                cli.main()
+            except SystemExit:
+                pass
+            _cat._cache = None
+        self.assertEqual(
+            [w for w in caught if w.category is XrdClStartedWarning], [])
 
 
 class TestXrdClStartedDetection(unittest.TestCase):
