@@ -26,10 +26,18 @@ import os as _os
 
 from .catalog import catalog
 from .environment import setup_environment, apply_environment
-from .filesystem import FdpFileSystem
 from . import _version
 
 __version__ = _version.get_versions()["version"]
+
+
+def __getattr__(name):
+    # Importing XRootD starts XrdCl, which reads its plugin dir and token
+    # once; doing that at `import fdp` would defeat setup_environment().
+    if name == "FdpFileSystem":
+        from .filesystem import FdpFileSystem
+        return FdpFileSystem
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def main_logo_path() -> str | None:

@@ -328,11 +328,43 @@ def setup_environment(
     device (argument, $FDP_DEFAULT_DEVICE, or ~/.fdp/config.toml) narrows to
     that one. Env emission is locator-driven. Mutates os.environ in place and
     is safe to call repeatedly.
+
+    Call it before anything imports XRootD.client: XrdCl reads its plugin
+    dir and bearer token when it starts, and ignores later changes.
     """
     handles = active_handles(device)
+    read_at_start = ["XRD_PLUGINCONFDIR"] + [
+        e for e in (auth.bearer_env(h) for h in handles) if e]
+    before = {k: os.environ.get(k) for k in read_at_start}
+
     apply_environment(compose_device_config(handles), os.environ)
 
     for key, value in overrides.items():
         os.environ[key] = str(value)
 
     _apply_tokens(handles, bearer_token, auto_login)
+    _warn_if_too_late_for_xrdcl(
+        [k for k in dict.fromkeys(read_at_start)
+         if os.environ.get(k) != before[k]])
+
+
+def _xrdcl_started() -> bool:
+    # libXrdCl starts from a static initializer, so loaded means started;
+    # MDSplus and ptdata load it too, not only the Python bindings.
+    try:
+        with open("/proc/self/maps") as maps:
+            return "libXrdCl" in maps.read()
+    except OSError:
+        return "pyxrootd.client" in sys.modules or "MDSplus" in sys.modules
+
+
+def _warn_if_too_late_for_xrdcl(changed: list) -> None:
+    if not changed or not _xrdcl_started():
+        return
+    warnings.warn(
+        f"setup_environment() set {', '.join(changed)} after the XRootD "
+        "client had already started in this process, so XRootD will not see "
+        "the change and MDSplus reads over Pelican will fail (TreeFOPENR). "
+        "Call setup_environment() before importing anything that imports "
+        "XRootD.client, or launch the process under `fdp run`.",
+        RuntimeWarning, stacklevel=3)
