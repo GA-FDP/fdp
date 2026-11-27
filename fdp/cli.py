@@ -20,6 +20,7 @@ import shlex
 import subprocess
 import sys
 import time
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,7 +30,8 @@ from .devices import (
     CAPABILITIES, NoDevicesError, active_handles, resolve_for_capability,
 )
 from .environment import (
-    compose_device_config, resolve_bearer_token, setup_environment,
+    XrdClStartedWarning, compose_device_config, resolve_bearer_token,
+    setup_environment,
 )
 from .filesystem import FdpFileSystem
 from .llm_shims import do_backends as _llm_do_backends
@@ -744,11 +746,14 @@ def main(argv=None) -> None:
         # Device resolution can fail (e.g. no default chosen among several
         # registered tokamaks); present it as a clean message, not a traceback.
         try:
-            setup_environment(
-                device=args.device,
-                bearer_token=args.bearer_token or None,
-                auto_login=getattr(args, "auto_login", False),
-            )
+            # The composed env reaches XrdCl through a child or the re-exec.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", XrdClStartedWarning)
+                setup_environment(
+                    device=args.device,
+                    bearer_token=args.bearer_token or None,
+                    auto_login=getattr(args, "auto_login", False),
+                )
             _reexec_with_composed_env(args)
         except (ValueError, KeyError) as exc:
             # Only "nothing is installed here" is worth continuing past: it
