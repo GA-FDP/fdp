@@ -362,11 +362,23 @@ class XrdClStartedWarning(RuntimeWarning):
 def _xrdcl_started() -> bool:
     # libXrdCl starts from a static initializer, so loaded means started;
     # MDSplus and ptdata load it too, not only the Python bindings.
+    if sys.platform == "darwin":
+        return any("libXrdCl" in name for name in _dyld_images())
     try:
         with open("/proc/self/maps") as maps:
             return "libXrdCl" in maps.read()
     except OSError:
         return "pyxrootd.client" in sys.modules or "MDSplus" in sys.modules
+
+
+def _dyld_images() -> list:
+    import ctypes
+    libc = ctypes.CDLL(None)
+    libc._dyld_get_image_name.restype = ctypes.c_char_p
+    libc._dyld_get_image_name.argtypes = [ctypes.c_uint32]
+    names = (libc._dyld_get_image_name(i)
+             for i in range(libc._dyld_image_count()))
+    return [n.decode(errors="replace") for n in names if n]
 
 
 def _warn_too_late_for_xrdcl(changed: list) -> None:
